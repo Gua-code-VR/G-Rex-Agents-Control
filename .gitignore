@@ -1,0 +1,25 @@
+# Dipendenze
+node_modules/
+
+# Output di build
+dist/
+*.tsbuildinfo
+
+# Dati locali di Agent Control (persistenza SQLite)
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Log
+*.log
+logs/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

@@ -1,0 +1,26 @@
+{
+  "name": "g-rex-agent-control",
+  "version": "0.2.0",
+  "private": true,
+  "description": "G-Rex Agent Control - piano di controllo locale per più agenti di sviluppo (M2: registro progetti e stato)",
+  "type": "module",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w server && npm run build -w web",
+    "test": "npm run test -w server",
+    "verify": "npm run build && npm test",
+    "start": "npm run start -w server"
+  },
+  "engines": {
+    "node": ">=23.4"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
