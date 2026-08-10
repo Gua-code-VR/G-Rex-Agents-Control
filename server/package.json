@@ -1,9 +1,9 @@
 {
   "name": "g-rex-agent-control-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Control plane di G-Rex Agent Control: API REST + registro progetti e stato + stato Git essenziale + persistenza SQLite locale (node:sqlite, SQLite nativo di Node.js)",
+  "description": "Control plane di G-Rex Agent Control: API REST + registro progetti e stato + stato Git essenziale + obiettivi e sessioni agente (M3) + persistenza SQLite locale (node:sqlite, SQLite nativo di Node.js)",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",

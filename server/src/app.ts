@@ -1,12 +1,19 @@
 import cors from '@fastify/cors';
 import type { DatabaseSync } from 'node:sqlite';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { AgentSessionService } from './application/agent-session-service.js';
 import { EventService } from './application/event-service.js';
 import { GitStatusService } from './application/git-status-service.js';
+import { ObjectiveService } from './application/objective-service.js';
 import { ProjectService } from './application/project-service.js';
 import { registerRoutes } from './api/routes.js';
 import { loadConfig, type AppConfig } from './config.js';
+import { ClineAdapter, FakeAgentAdapter, type AgentAdapter } from './integrations/agent-adapter.js';
 import { openDatabase } from './infrastructure/db/connection.js';
+import {
+  SqliteObjectiveRepository,
+  SqliteSessionRepository,
+} from './infrastructure/db/objective-repo.js';
 import { SqliteProjectRepository } from './infrastructure/db/project-repo.js';
 
 export interface AppServices {
@@ -14,11 +21,22 @@ export interface AppServices {
   events: EventService;
   projects: ProjectService;
   gitStatus: GitStatusService;
+  objectives: ObjectiveService;
+  agentSessions: AgentSessionService;
+  agent: AgentAdapter;
 }
 
 export interface BuiltApp {
   app: FastifyInstance;
   services: AppServices;
+}
+
+/** Seleziona l'adapter agente (§8 e §14): fake per demo/test, Cline in produzione. */
+export function buildAgentAdapter(config: AppConfig): AgentAdapter {
+  if (config.agentMode === 'fake') {
+    return new FakeAgentAdapter();
+  }
+  return new ClineAdapter(config.clineCommand, config.clineEnabled);
 }
 
 /**
@@ -31,6 +49,25 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const projectRepository = new SqliteProjectRepository(db);
   const projects = new ProjectService(projectRepository, events);
   const gitStatus = new GitStatusService(projectRepository, events);
+  const objectiveRepository = new SqliteObjectiveRepository(db);
+  const sessionRepository = new SqliteSessionRepository(db);
+  const agent = buildAgentAdapter(config);
+  const objectives = new ObjectiveService(
+    objectiveRepository,
+    sessionRepository,
+    projects,
+    gitStatus,
+    events,
+    agent,
+  );
+  const agentSessions = new AgentSessionService(
+    objectiveRepository,
+    sessionRepository,
+    projects,
+    gitStatus,
+    events,
+    agent,
+  );
 
   const app = Fastify({ logger: { level: config.logLevel } });
 
@@ -39,7 +76,18 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
   });
 
-  registerRoutes(app, { projects, events, gitStatus, config });
+  registerRoutes(app, { projects, events, gitStatus, objectives, agentSessions, config });
 
-  return { app, services: { db, events, projects, gitStatus } };
+  return {
+    app,
+    services: {
+      db,
+      events,
+      projects,
+      gitStatus,
+      objectives,
+      agentSessions,
+      agent,
+    },
+  };
 }

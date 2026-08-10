@@ -24,8 +24,8 @@ describe('M1 - health e stato dashboard', () => {
     const body = res.json();
     expect(body.status).toBe('ok');
     expect(body.service).toBe('g-rex-agent-control');
-    expect(body.version).toBe('0.2.0');
-    expect(body.schemaVersion).toBe(2);
+    expect(body.version).toBe('0.3.0');
+    expect(body.schemaVersion).toBe(3);
     expect(typeof body.uptimeSeconds).toBe('number');
     expect(typeof body.timestamp).toBe('string');
   });

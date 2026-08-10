@@ -76,6 +76,72 @@ export interface UpdateProjectInput {
   currentObjective?: string | null;
 }
 
+export type ObjectiveStatus =
+  | 'IN_AVVIO'
+  | 'IN_LAVORAZIONE'
+  | 'RICHIEDE_ATTENZIONE'
+  | 'BLOCCATO'
+  | 'COMPLETATO'
+  | 'ERRORE'
+  | 'ANNULLATO';
+
+export type SessionStatus = 'IN_AVVIO' | 'ATTIVA' | 'COMPLETATA' | 'ERRORE' | 'INTERROTTA';
+
+export interface Objective {
+  id: string;
+  projectId: string;
+  title: string;
+  objectiveText: string;
+  invariants: string[];
+  acceptanceCriteria: string[];
+  stopCondition: string | null;
+  status: ObjectiveStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+  finalReport: string | null;
+  gitStart: GitStatus | null;
+  gitEnd: GitStatus | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentSession {
+  id: string;
+  objectiveId: string;
+  agentType: string;
+  startedAt: string;
+  endedAt: string | null;
+  status: SessionStatus;
+  lastActivityAt: string | null;
+  processReference: string | null;
+  exitReason: string | null;
+}
+
+export interface CreateObjectiveInput {
+  title: string;
+  objectiveText: string;
+  invariants?: string[];
+  acceptanceCriteria?: string[];
+  stopCondition?: string | null;
+}
+
+/** Risposta delle API di transizione sessione/obiettivo (M3). */
+export interface ObjectiveTransition {
+  objective: Objective;
+  session: AgentSession;
+  project: Project | null;
+}
+
+export interface ObjectiveDetail {
+  objective: Objective;
+  sessions: AgentSession[];
+}
+
+export interface CancelObjectiveResponse {
+  objective: Objective;
+  project: Project | null;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
@@ -116,6 +182,32 @@ export const api = {
     }),
   refreshProjectGitStatus: (id: string) =>
     request<{ project: Project }>(`/api/projects/${id}/git-status`, {
+      method: 'POST',
+    }),
+  listObjectives: (projectId: string) =>
+    request<{ objectives: Objective[] }>(`/api/projects/${projectId}/objectives`),
+  createObjective: (projectId: string, input: CreateObjectiveInput) =>
+    request<ObjectiveTransition>(`/api/projects/${projectId}/objectives`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  getObjective: (id: string) => request<ObjectiveDetail>(`/api/objectives/${id}`),
+  startSession: (objectiveId: string, sessionId: string) =>
+    request<ObjectiveTransition>(`/api/objectives/${objectiveId}/sessions/${sessionId}/start`, {
+      method: 'POST',
+    }),
+  stopSession: (objectiveId: string, sessionId: string, reason?: string) =>
+    request<ObjectiveTransition>(`/api/objectives/${objectiveId}/sessions/${sessionId}/stop`, {
+      method: 'POST',
+      body: JSON.stringify(reason ? { reason } : {}),
+    }),
+  completeObjective: (objectiveId: string, report?: string) =>
+    request<ObjectiveTransition>(`/api/objectives/${objectiveId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify(report ? { report } : {}),
+    }),
+  cancelObjective: (objectiveId: string) =>
+    request<CancelObjectiveResponse>(`/api/objectives/${objectiveId}/cancel`, {
       method: 'POST',
     }),
   listEvents: (limit = 50) =>

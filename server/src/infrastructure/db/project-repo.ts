@@ -15,6 +15,7 @@ interface ProjectRow {
   repository_path: string | null;
   status: ProjectStatus;
   current_objective: string | null;
+  current_objective_id: string | null;
   git_snapshot: string | null;
   created_at: string;
   updated_at: string;
@@ -38,6 +39,7 @@ export function toProject(row: ProjectRow): Project {
     status: row.status,
     statusGroup: projectStatusGroup(row.status),
     currentObjective: row.current_objective,
+    currentObjectiveId: row.current_objective_id,
     gitStatus: parseGitSnapshot(row.git_snapshot),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -50,6 +52,7 @@ export interface ProjectRepository {
   getById(id: string): Project | null;
   update(id: string, input: UpdateProjectInput): Project | null;
   setStatus(id: string, status: ProjectStatus): Project | null;
+  setCurrentObjective(id: string, objectiveId: string | null, title: string | null): Project | null;
   updateGitSnapshot(id: string, snapshot: GitStatus | null): Project | null;
 }
 
@@ -61,6 +64,7 @@ export class SqliteProjectRepository implements ProjectRepository {
   private readonly setRepoStmt: StatementSync;
   private readonly setObjectiveStmt: StatementSync;
   private readonly setStatusStmt: StatementSync;
+  private readonly setCurrentObjStmt: StatementSync;
   private readonly setGitStmt: StatementSync;
 
   constructor(db: DatabaseSync) {
@@ -79,8 +83,11 @@ export class SqliteProjectRepository implements ProjectRepository {
       'UPDATE projects SET current_objective = ?, updated_at = ? WHERE id = ?',
     );
     this.setStatusStmt = db.prepare('UPDATE projects SET status = ?, updated_at = ? WHERE id = ?');
+    this.setCurrentObjStmt = db.prepare(
+      'UPDATE projects SET current_objective_id = ?, updated_at = ? WHERE id = ?',
+    );
     // Lo snapshot Git non è una modifica del progetto in sé: updated_at resta la
-    // crona dello stato operativo, lo snapshot ha il suo fetchedAt interno.
+    // crono dello stato operativo, lo snapshot ha il suo fetchedAt interno.
     this.setGitStmt = db.prepare('UPDATE projects SET git_snapshot = ? WHERE id = ?');
   }
 
@@ -93,6 +100,7 @@ export class SqliteProjectRepository implements ProjectRepository {
       status: 'FERMO',
       statusGroup: 'FERMO',
       currentObjective: input.currentObjective ?? null,
+      currentObjectiveId: null,
       gitStatus: null,
       createdAt: now,
       updatedAt: now,
@@ -134,6 +142,15 @@ export class SqliteProjectRepository implements ProjectRepository {
   setStatus(id: string, status: ProjectStatus): Project | null {
     if (!this.getById(id)) return null;
     this.setStatusStmt.run(status, new Date().toISOString(), id);
+    return this.getById(id);
+  }
+
+  setCurrentObjective(id: string, objectiveId: string | null, title: string | null): Project | null {
+    if (!this.getById(id)) return null;
+    const updatedAt = new Date().toISOString();
+    // Aggiorna sia current_objective (denormalizzato) sia current_objective_id (relazione §5).
+    this.setObjectiveStmt.run(title ?? null, updatedAt, id);
+    this.setCurrentObjStmt.run(objectiveId, updatedAt, id);
     return this.getById(id);
   }
 

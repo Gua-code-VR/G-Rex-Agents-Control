@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   api,
+  type AgentSession,
+  type CreateObjectiveInput,
   type EventRecord,
   type GitStatus,
+  type Objective,
+  type ObjectiveStatus,
   type Project,
   type ProjectStatus,
   type ProjectStatusGroup,
+  type SessionStatus,
   type StatusResponse,
 } from './api/client';
 
@@ -30,6 +35,48 @@ const STATUS_OPTIONS: ProjectStatus[] = [
   'COMPLETATO',
   'ERRORE',
 ];
+
+const OBJECTIVE_STATUS_LABEL: Record<ObjectiveStatus, string> = {
+  IN_AVVIO: 'In avvio',
+  IN_LAVORAZIONE: 'In lavorazione',
+  RICHIEDE_ATTENZIONE: 'Richiede attenzione',
+  BLOCCATO: 'Bloccato',
+  COMPLETATO: 'Completato',
+  ERRORE: 'Errore',
+  ANNULLATO: 'Annullato',
+};
+
+const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
+  IN_AVVIO: 'In avvio',
+  ATTIVA: 'Attiva',
+  COMPLETATA: 'Completata',
+  ERRORE: 'Errore',
+  INTERROTTA: 'Interrotta',
+};
+
+/** Stati di obiettivo non terminali: finché esistono, l'invariante §14 resta attivo. */
+const NON_TERMINAL_OBJECTIVE_STATUSES: ObjectiveStatus[] = [
+  'IN_AVVIO',
+  'IN_LAVORAZIONE',
+  'RICHIEDE_ATTENZIONE',
+  'BLOCCATO',
+];
+
+/** Stati in cui l'obiettivo ha una sessione ancora aperta (avviabile o attiva). */
+const OPEN_OBJECTIVE_STATUSES: ObjectiveStatus[] = ['IN_AVVIO', 'IN_LAVORAZIONE'];
+
+/** Una riga per voce: utile per invarianti e criteri di accettazione inseriti a capo. */
+function splitLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function shortCommit(head: string | null): string {
+  if (!head) return 'nessun commit';
+  return head.length > 12 ? `${head.slice(0, 12)}…` : head;
+}
 
 /** I tre macro-gruppi che la dashboard M2 deve distinguere in modo affidabile. */
 const GROUPS: Array<{ key: ProjectStatusGroup; label: string; hint: string }> = [
@@ -171,6 +218,342 @@ function ProjectCard({
   );
 }
 
+function ObjectiveCard({
+  objective,
+  sessions,
+  busy,
+  onStart,
+  onStop,
+  onComplete,
+  onCancel,
+}: {
+  objective: Objective;
+  sessions: AgentSession[];
+  busy: boolean;
+  onStart: (objectiveId: string, sessionId: string) => void;
+  onStop: (objectiveId: string, sessionId: string, reason?: string) => void;
+  onComplete: (objectiveId: string, report?: string) => void;
+  onCancel: (objectiveId: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [report, setReport] = useState('');
+
+  const canCancel = NON_TERMINAL_OBJECTIVE_STATUSES.includes(objective.status);
+  const canComplete = OPEN_OBJECTIVE_STATUSES.includes(objective.status);
+
+  return (
+    <article className="objective-card">
+      <header className="objective-card-head">
+        <h3>{objective.title}</h3>
+        <span className={`badge badge-${objective.status.toLowerCase()}`}>
+          {OBJECTIVE_STATUS_LABEL[objective.status]}
+        </span>
+      </header>
+
+      <p className="objective-text">{objective.objectiveText}</p>
+
+      {objective.invariants.length > 0 && (
+        <div className="objective-list">
+          <span className="objective-label">Invarianti</span>
+          <ul>
+            {objective.invariants.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {objective.acceptanceCriteria.length > 0 && (
+        <div className="objective-list">
+          <span className="objective-label">Criteri di accettazione</span>
+          <ul>
+            {objective.acceptanceCriteria.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {objective.stopCondition && (
+        <p className="muted small">Condizione di stop: {objective.stopCondition}</p>
+      )}
+
+      <div className="objective-snapshots">
+        {objective.gitStart && (
+          <span className="chip chip-dim" title={`Snapshot di inizio (${formatDate(objective.gitStart.fetchedAt)})`}>
+            Git inizio: {objective.gitStart.branch ?? '?'} @ {shortCommit(objective.gitStart.head)}
+          </span>
+        )}
+        {objective.gitEnd && (
+          <span className="chip chip-clean" title={`Snapshot di fine (${formatDate(objective.gitEnd.fetchedAt)})`}>
+            Git fine: {objective.gitEnd.branch ?? '?'} @ {shortCommit(objective.gitEnd.head)}
+          </span>
+        )}
+      </div>
+
+      {objective.finalReport && (
+        <div className="report-box">
+          <span className="objective-label">Report finale</span>
+          <p>{objective.finalReport}</p>
+        </div>
+      )}
+
+      <div className="sessions-box">
+        <span className="objective-label">Sessioni agente</span>
+        {sessions.length === 0 ? (
+          <p className="muted small">Nessuna sessione registrata.</p>
+        ) : (
+          sessions.map((session) => {
+            const startable = session.status === 'IN_AVVIO';
+            const stoppable = session.status === 'ATTIVA';
+            return (
+              <div className="session-row" key={session.id}>
+                <div className="session-row-head">
+                  <span className={`badge badge-${session.status.toLowerCase()}`}>
+                    {SESSION_STATUS_LABEL[session.status]}
+                  </span>
+                  <span className="muted small">{session.agentType}</span>
+                  <time className="muted small">inizio {formatDate(session.startedAt)}</time>
+                  {session.endedAt && (
+                    <time className="muted small">fine {formatDate(session.endedAt)}</time>
+                  )}
+                </div>
+                {session.processReference && (
+                  <code className="muted small session-ref">{session.processReference}</code>
+                )}
+                {session.exitReason && <p className="muted small session-exit">{session.exitReason}</p>}
+                {startable && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={() => onStart(objective.id, session.id)}
+                  >
+                    {busy ? 'Avvio…' : 'Avvia sessione'}
+                  </button>
+                )}
+                {stoppable && (
+                  <div className="session-actions">
+                    <input
+                      value={reason}
+                      onChange={(event) => setReason(event.target.value)}
+                      placeholder="Motivo stop (opzionale)"
+                      maxLength={500}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={busy}
+                      onClick={() => onStop(objective.id, session.id, reason.trim() || undefined)}
+                    >
+                      {busy ? 'Stop…' : 'Ferma sessione'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {canComplete && (
+        <div className="session-actions complete-actions">
+          <textarea
+            value={report}
+            onChange={(event) => setReport(event.target.value)}
+            rows={2}
+            maxLength={10000}
+            placeholder="Report finale (opzionale)"
+          />
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => onComplete(objective.id, report.trim() || undefined)}
+          >
+            {busy ? 'Completo…' : 'Completa obiettivo'}
+          </button>
+        </div>
+      )}
+
+      {canCancel && (
+        <div className="objective-card-actions">
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => onCancel(objective.id)}>
+            Annulla obiettivo
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ObjectivesSection({
+  projects,
+  objectivesByProject,
+  sessionsByObjective,
+  selectedProjectId,
+  onSelectProject,
+  busy,
+  creating,
+  onCreate,
+  onStart,
+  onStop,
+  onComplete,
+  onCancel,
+}: {
+  projects: Project[];
+  objectivesByProject: Record<string, Objective[]>;
+  sessionsByObjective: Record<string, AgentSession[]>;
+  selectedProjectId: string;
+  onSelectProject: (id: string) => void;
+  busy: Record<string, boolean>;
+  creating: boolean;
+  onCreate: (input: CreateObjectiveInput) => Promise<void>;
+  onStart: (objectiveId: string, sessionId: string) => void;
+  onStop: (objectiveId: string, sessionId: string, reason?: string) => void;
+  onComplete: (objectiveId: string, report?: string) => void;
+  onCancel: (objectiveId: string) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [objectiveText, setObjectiveText] = useState('');
+  const [invariants, setInvariants] = useState('');
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
+  const [stopCondition, setStopCondition] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const selected = projects.find((p) => p.id === selectedProjectId) ?? null;
+  const objectives = selected ? objectivesByProject[selected.id] ?? [] : [];
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedTitle = title.trim();
+    const trimmedText = objectiveText.trim();
+    if (!trimmedTitle || !trimmedText) {
+      setFormError("Titolo e testo dell'obiettivo sono obbligatori.");
+      return;
+    }
+    setFormError(null);
+    void onCreate({
+      title: trimmedTitle,
+      objectiveText: trimmedText,
+      invariants: splitLines(invariants),
+      acceptanceCriteria: splitLines(acceptanceCriteria),
+      ...(stopCondition.trim() ? { stopCondition: stopCondition.trim() } : {}),
+    })
+      .then(() => {
+        setTitle('');
+        setObjectiveText('');
+        setInvariants('');
+        setAcceptanceCriteria('');
+        setStopCondition('');
+      })
+      .catch(() => {
+        // L'errore dell'API viene mostrato nella barra superiore: i campi restano compilati.
+      });
+  };
+
+  return (
+    <section className="card span-2 objectives-section">
+      <header className="group-head">
+        <h2>Obiettivi e sessioni agente</h2>
+        <p className="muted small">
+          Ciclo obiettivo → sessione agente (§5): un solo obiettivo attivo per progetto.
+        </p>
+      </header>
+
+      <label className="select-label">
+        Progetto
+        <select value={selectedProjectId} onChange={(event) => onSelectProject(event.target.value)}>
+          <option value="">— Seleziona un progetto —</option>
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {selected && (
+        <>
+          <form className="form objective-form" onSubmit={handleSubmit}>
+            <h3>Nuovo obiettivo su «{selected.name}»</h3>
+            <label>
+              Titolo
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                maxLength={200}
+                placeholder="es. Completare la fondazione operativa"
+              />
+            </label>
+            <label>
+              Testo dell'obiettivo
+              <textarea
+                value={objectiveText}
+                onChange={(event) => setObjectiveText(event.target.value)}
+                rows={3}
+                maxLength={8000}
+                placeholder="Cosa deve fare l'agente."
+              />
+            </label>
+            <label>
+              Invarianti (una per riga, facoltativo)
+              <textarea
+                value={invariants}
+                onChange={(event) => setInvariants(event.target.value)}
+                rows={2}
+                placeholder="es. Non esporre porte verso Internet"
+              />
+            </label>
+            <label>
+              Criteri di accettazione (una per riga, facoltativo)
+              <textarea
+                value={acceptanceCriteria}
+                onChange={(event) => setAcceptanceCriteria(event.target.value)}
+                rows={2}
+                placeholder="es. I test passano"
+              />
+            </label>
+            <label>
+              Condizione di stop (facoltativo)
+              <textarea
+                value={stopCondition}
+                onChange={(event) => setStopCondition(event.target.value)}
+                rows={2}
+                maxLength={2000}
+                placeholder="es. Quando la prima demo è pronta"
+              />
+            </label>
+            {formError && <p className="form-error">{formError}</p>}
+            <button type="submit" disabled={creating || busy[selected.id]}>
+              {creating ? 'Creazione…' : 'Crea obiettivo'}
+            </button>
+          </form>
+
+          <div className="objective-grid">
+            {objectives.length === 0 ? (
+              <p className="muted small">Nessun obiettivo per questo progetto.</p>
+            ) : (
+              objectives.map((objective) => (
+                <ObjectiveCard
+                  key={objective.id}
+                  objective={objective}
+                  sessions={sessionsByObjective[objective.id] ?? []}
+                  busy={Boolean(busy[objective.id])}
+                  onStart={onStart}
+                  onStop={onStop}
+                  onComplete={onComplete}
+                  onCancel={onCancel}
+                />
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -189,6 +572,29 @@ export default function App() {
   const [statusBusy, setStatusBusy] = useState<Record<string, boolean>>({});
   const [gitBusy, setGitBusy] = useState<Record<string, boolean>>({});
 
+  // M3: obiettivi e sessioni agente.
+  const [objectivesByProject, setObjectivesByProject] = useState<Record<string, Objective[]>>({});
+  const [sessionsByObjective, setSessionsByObjective] = useState<Record<string, AgentSession[]>>({});
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [objectiveBusy, setObjectiveBusy] = useState<Record<string, boolean>>({});
+  const [creatingObjective, setCreatingObjective] = useState(false);
+
+  /** M3: carica obiettivi e sessioni per tutti i progetti (dettaglio con sessioni). */
+  const loadM3 = useCallback(async (projectsList: Project[]) => {
+    const loadedObjectives: Record<string, Objective[]> = {};
+    const loadedSessions: Record<string, AgentSession[]> = {};
+    for (const project of projectsList) {
+      const { objectives } = await api.listObjectives(project.id);
+      loadedObjectives[project.id] = objectives;
+      const details = await Promise.all(objectives.map((o) => api.getObjective(o.id)));
+      for (const detail of details) {
+        loadedSessions[detail.objective.id] = detail.sessions;
+      }
+    }
+    setObjectivesByProject(loadedObjectives);
+    setSessionsByObjective(loadedSessions);
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const [statusResult, projectsResult, eventsResult] = await Promise.all([
@@ -199,17 +605,25 @@ export default function App() {
       setStatus(statusResult);
       setProjects(projectsResult.projects);
       setEvents(eventsResult.events);
+      await loadM3(projectsResult.projects);
       setLoadState('ready');
       setError(null);
     } catch (err) {
       setLoadState('error');
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [loadM3]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // M3: preseleziona il primo progetto quando il registro è caricato.
+  useEffect(() => {
+    if (!selectedProjectId && projects.length > 0) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [projects, selectedProjectId]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -267,6 +681,47 @@ export default function App() {
   const handlePendingStatus = (id: string, s: ProjectStatus) =>
     setPendingStatus((prev) => ({ ...prev, [id]: s }));
 
+  // --- M3: ciclo obiettivo → sessione agente ---
+  const runObjectiveAction = async (objectiveId: string, action: () => Promise<unknown>) => {
+    setActionError(null);
+    setObjectiveBusy((prev) => ({ ...prev, [objectiveId]: true }));
+    try {
+      await action();
+      await refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setObjectiveBusy((prev) => ({ ...prev, [objectiveId]: false }));
+    }
+  };
+
+  const handleCreateObjective = async (input: CreateObjectiveInput) => {
+    if (!selectedProjectId) return;
+    setCreatingObjective(true);
+    setActionError(null);
+    try {
+      await api.createObjective(selectedProjectId, input);
+      await refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      setCreatingObjective(false);
+    }
+  };
+
+  const handleStart = (objectiveId: string, sessionId: string) =>
+    void runObjectiveAction(objectiveId, () => api.startSession(objectiveId, sessionId));
+
+  const handleStop = (objectiveId: string, sessionId: string, reason?: string) =>
+    void runObjectiveAction(objectiveId, () => api.stopSession(objectiveId, sessionId, reason));
+
+  const handleComplete = (objectiveId: string, report?: string) =>
+    void runObjectiveAction(objectiveId, () => api.completeObjective(objectiveId, report));
+
+  const handleCancel = (objectiveId: string) =>
+    void runObjectiveAction(objectiveId, () => api.cancelObjective(objectiveId));
+
   return (
     <div className="layout">
       <header className="topbar">
@@ -276,7 +731,7 @@ export default function App() {
           </span>
           <div>
             <h1>G-Rex Agent Control</h1>
-            <p>Piano di controllo locale degli agenti · M2 Registro progetti e stato</p>
+            <p>Piano di controllo locale degli agenti · M3 Obiettivi e sessioni agente</p>
           </div>
         </div>
         {status ? (
@@ -399,6 +854,21 @@ export default function App() {
               </section>
             );
           })}
+
+          <ObjectivesSection
+            projects={projects}
+            objectivesByProject={objectivesByProject}
+            sessionsByObjective={sessionsByObjective}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={setSelectedProjectId}
+            busy={objectiveBusy}
+            creating={creatingObjective}
+            onCreate={handleCreateObjective}
+            onStart={handleStart}
+            onStop={handleStop}
+            onComplete={handleComplete}
+            onCancel={handleCancel}
+          />
 
           <section className="card span-2">
             <h2>Eventi recenti (State &amp; Event Store)</h2>

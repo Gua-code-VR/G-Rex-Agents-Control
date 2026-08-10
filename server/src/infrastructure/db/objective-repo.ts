@@ -1,0 +1,295 @@
+import { randomUUID } from 'node:crypto';
+import type { DatabaseSync, StatementSync } from 'node:sqlite';
+import type { GitStatus } from '../../domain/project.js';
+import type {
+  AgentSession,
+  CreateObjectiveInput,
+  Objective,
+  ObjectiveStatus,
+  SessionStatus,
+} from '../../domain/objective.js';
+
+interface ObjectiveRow {
+  id: string;
+  project_id: string;
+  title: string;
+  objective_text: string;
+  invariants: string | null;
+  acceptance_criteria: string | null;
+  stop_condition: string | null;
+  status: ObjectiveStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  final_report: string | null;
+  git_start: string | null;
+  git_end: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Decodifica una lista JSON persistita (invariants/criteria); mai null. */
+function parseJsonList(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Decodifica uno snapshot Git JSON persistito; mai null. */
+function parseGitSnapshot(raw: string | null): GitStatus | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as GitStatus;
+  } catch {
+    return null;
+  }
+}
+
+function toObjective(row: ObjectiveRow): Objective {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    objectiveText: row.objective_text,
+    invariants: parseJsonList(row.invariants),
+    acceptanceCriteria: parseJsonList(row.acceptance_criteria),
+    stopCondition: row.stop_condition,
+    status: row.status,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    finalReport: row.final_report,
+    gitStart: parseGitSnapshot(row.git_start),
+    gitEnd: parseGitSnapshot(row.git_end),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toSession(row: SessionRow): AgentSession {
+  return {
+    id: row.id,
+    objectiveId: row.objective_id,
+    agentType: row.agent_type,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    status: row.status,
+    lastActivityAt: row.last_activity_at,
+    processReference: row.process_reference,
+    exitReason: row.exit_reason,
+  };
+}
+
+export interface ObjectiveRepository {
+  create(projectId: string, input: CreateObjectiveInput): Objective;
+  getById(id: string): Objective | null;
+  listByProject(projectId: string): Objective[];
+  getActiveByProject(projectId: string): Objective | null;
+  setStatus(id: string, status: ObjectiveStatus): Objective | null;
+  setGitStart(id: string, gitStart: GitStatus | null): Objective | null;
+  markActive(id: string, status: ObjectiveStatus, startedAt: string): Objective | null;
+  complete(id: string, report: string, gitEnd: GitStatus | null): Objective | null;
+}
+
+export interface SessionRepository {
+  create(objectiveId: string, agentType: string): AgentSession;
+  getById(id: string): AgentSession | null;
+  listByObjective(objectiveId: string): AgentSession[];
+  setStatus(id: string, status: SessionStatus): AgentSession | null;
+  setProcessReference(id: string, processReference: string): AgentSession | null;
+  touchActivity(id: string): AgentSession | null;
+  terminate(id: string, status: SessionStatus, exitReason: string | null): AgentSession | null;
+}
+interface SessionRow {
+  id: string;
+  objective_id: string;
+  agent_type: string;
+  started_at: string;
+  ended_at: string | null;
+  status: SessionStatus;
+  last_activity_at: string | null;
+  process_reference: string | null;
+  exit_reason: string | null;
+}
+
+/** Repository SQLite per l'entità Objective (§5). */
+export class SqliteObjectiveRepository implements ObjectiveRepository {
+  private readonly insertStmt: StatementSync;
+  private readonly getStmt: StatementSync;
+  private readonly listByProjectStmt: StatementSync;
+  private readonly getActiveStmt: StatementSync;
+  private readonly setStatusStmt: StatementSync;
+  private readonly setGitStartStmt: StatementSync;
+  private readonly markActiveStmt: StatementSync;
+  private readonly completeStmt: StatementSync;
+constructor(db: DatabaseSync) {
+    this.insertStmt = db.prepare(
+      `INSERT INTO objectives
+         (id, project_id, title, objective_text, invariants, acceptance_criteria,
+          stop_condition, status, created_at, updated_at)
+       VALUES
+         (:id, :projectId, :title, :objectiveText, :invariants, :acceptanceCriteria,
+          :stopCondition, :status, :createdAt, :updatedAt)`,
+    );
+    this.getStmt = db.prepare('SELECT * FROM objectives WHERE id = ?');
+    this.listByProjectStmt = db.prepare(
+      'SELECT * FROM objectives WHERE project_id = ? ORDER BY created_at DESC',
+    );
+    this.getActiveStmt = db.prepare(
+      `SELECT * FROM objectives
+       WHERE project_id = ? AND status IN ('IN_AVVIO','IN_LAVORAZIONE','RICHIEDE_ATTENZIONE','BLOCCATO')
+       ORDER BY created_at DESC LIMIT 1`,
+    );
+    this.setStatusStmt = db.prepare(
+      'UPDATE objectives SET status = ?, updated_at = ? WHERE id = ?',
+    );
+    this.setGitStartStmt = db.prepare(
+      'UPDATE objectives SET git_start = ?, updated_at = ? WHERE id = ?',
+    );
+    this.markActiveStmt = db.prepare(
+      'UPDATE objectives SET status = ?, started_at = ?, updated_at = ? WHERE id = ?',
+    );
+    this.completeStmt = db.prepare(
+      `UPDATE objectives
+       SET status = 'COMPLETATO', completed_at = ?, final_report = ?, git_end = ?, updated_at = ?
+       WHERE id = ?`,
+    );
+  }
+create(projectId: string, input: CreateObjectiveInput): Objective {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    this.insertStmt.run({
+      id,
+      projectId,
+      title: input.title,
+      objectiveText: input.objectiveText,
+      invariants: input.invariants.length > 0 ? JSON.stringify(input.invariants) : null,
+      acceptanceCriteria:
+        input.acceptanceCriteria.length > 0 ? JSON.stringify(input.acceptanceCriteria) : null,
+      stopCondition: input.stopCondition,
+      status: 'IN_AVVIO',
+      createdAt: now,
+      updatedAt: now,
+    });
+    return this.getById(id)!;
+  }
+
+  getById(id: string): Objective | null {
+    const row = this.getStmt.get(id) as ObjectiveRow | undefined;
+    return row ? toObjective(row) : null;
+  }
+
+  listByProject(projectId: string): Objective[] {
+    return (this.listByProjectStmt.all(projectId) as unknown as ObjectiveRow[]).map(toObjective);
+  }
+
+  getActiveByProject(projectId: string): Objective | null {
+    const row = this.getActiveStmt.get(projectId) as ObjectiveRow | undefined;
+    return row ? toObjective(row) : null;
+  }
+
+  setStatus(id: string, status: ObjectiveStatus): Objective | null {
+    if (!this.getById(id)) return null;
+    this.setStatusStmt.run(status, new Date().toISOString(), id);
+    return this.getById(id);
+  }
+
+  setGitStart(id: string, gitStart: GitStatus | null): Objective | null {
+    if (!this.getById(id)) return null;
+    this.setGitStartStmt.run(gitStart ? JSON.stringify(gitStart) : null, new Date().toISOString(), id);
+    return this.getById(id);
+  }
+
+  markActive(id: string, status: ObjectiveStatus, startedAt: string): Objective | null {
+    if (!this.getById(id)) return null;
+    this.markActiveStmt.run(status, startedAt, new Date().toISOString(), id);
+    return this.getById(id);
+  }
+
+  complete(id: string, report: string, gitEnd: GitStatus | null): Objective | null {
+    if (!this.getById(id)) return null;
+    const now = new Date().toISOString();
+    this.completeStmt.run(now, report, gitEnd ? JSON.stringify(gitEnd) : null, now, id);
+    return this.getById(id);
+  }
+}
+/** Repository SQLite per l'entità AgentSession (§5). */
+export class SqliteSessionRepository implements SessionRepository {
+  private readonly insertStmt: StatementSync;
+  private readonly getStmt: StatementSync;
+  private readonly listByObjStmt: StatementSync;
+  private readonly setStatusStmt: StatementSync;
+  private readonly setRefStmt: StatementSync;
+  private readonly touchActivityStmt: StatementSync;
+  private readonly terminateStmt: StatementSync;
+
+  constructor(db: DatabaseSync) {
+    this.insertStmt = db.prepare(
+      `INSERT INTO sessions
+         (id, objective_id, agent_type, started_at, status)
+       VALUES
+         (:id, :objectiveId, :agentType, :startedAt, :status)`,
+    );
+    this.getStmt = db.prepare('SELECT * FROM sessions WHERE id = ?');
+    this.listByObjStmt = db.prepare(
+      'SELECT * FROM sessions WHERE objective_id = ? ORDER BY started_at ASC',
+    );
+    this.setStatusStmt = db.prepare('UPDATE sessions SET status = ? WHERE id = ?');
+    this.setRefStmt = db.prepare(
+      'UPDATE sessions SET process_reference = ?, agent_type = ? WHERE id = ?',
+    );
+    this.touchActivityStmt = db.prepare('UPDATE sessions SET last_activity_at = ? WHERE id = ?');
+    this.terminateStmt = db.prepare(
+      'UPDATE sessions SET ended_at = ?, status = ?, exit_reason = ? WHERE id = ?',
+    );
+  }
+
+  create(objectiveId: string, agentType: string): AgentSession {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    this.insertStmt.run({
+      id,
+      objectiveId,
+      agentType,
+      startedAt: now,
+      status: 'IN_AVVIO',
+    });
+    return this.getById(id)!;
+  }
+
+  getById(id: string): AgentSession | null {
+    const row = this.getStmt.get(id) as SessionRow | undefined;
+    return row ? toSession(row) : null;
+  }
+
+  listByObjective(objectiveId: string): AgentSession[] {
+    return (this.listByObjStmt.all(objectiveId) as unknown as SessionRow[]).map(toSession);
+  }
+
+  setStatus(id: string, status: SessionStatus): AgentSession | null {
+    if (!this.getById(id)) return null;
+    this.setStatusStmt.run(status, id);
+    return this.getById(id);
+  }
+
+  setProcessReference(id: string, processReference: string): AgentSession | null {
+    const existing = this.getById(id);
+    if (!existing) return null;
+    this.setRefStmt.run(processReference, existing.agentType, id);
+    return this.getById(id);
+  }
+
+  touchActivity(id: string): AgentSession | null {
+    if (!this.getById(id)) return null;
+    this.touchActivityStmt.run(new Date().toISOString(), id);
+    return this.getById(id);
+  }
+
+  terminate(id: string, status: SessionStatus, exitReason: string | null): AgentSession | null {
+    if (!this.getById(id)) return null;
+    this.terminateStmt.run(new Date().toISOString(), status, exitReason, id);
+    return this.getById(id);
+  }
+}

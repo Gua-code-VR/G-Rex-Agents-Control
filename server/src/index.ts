@@ -10,7 +10,7 @@ async function main(): Promise<void> {
   await app.listen({ host: config.host, port: config.port });
 
   services.events.log(EVENT_APP_STARTED, {
-    payload: { pid: process.pid, version: '0.2.0' },
+    payload: { pid: process.pid, version: '0.3.0' },
   });
   app.log.info(`G-Rex Agent Control avviato su http://${config.host}:${config.port}`);
   app.log.info(`Persistenza locale: ${config.dbPath}`);

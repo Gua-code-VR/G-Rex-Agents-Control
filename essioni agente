@@ -1,0 +1,37 @@
+warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/api/routes.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/app.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/application/git-status-service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/application/project-service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/config.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/domain/project.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/index.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/infrastructure/db/project-repo.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/infrastructure/db/schema.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/integrations/agent-adapter.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/test/health.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'web/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'web/src/App.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'web/src/api/client.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'web/src/styles.css', LF will be replaced by CRLF the next time Git touches it
+ README.md                                    |  36 [32m+[m[31m-[m
+ package.json                                 |   4 [32m+[m[31m-[m
+ server/package.json                          |   4 [32m+[m[31m-[m
+ server/src/api/routes.ts                     | 107 [32m+++++[m[31m-[m
+ server/src/app.ts                            |  52 [32m++[m[31m-[m
+ server/src/application/git-status-service.ts |  13 [32m+[m[31m-[m
+ server/src/application/project-service.ts    |  20 [32m++[m
+ server/src/config.ts                         |  15 [32m+[m
+ server/src/domain/project.ts                 |   9 [32m+[m[31m-[m
+ server/src/index.ts                          |   2 [32m+[m[31m-[m
+ server/src/infrastructure/db/project-repo.ts |  19 [32m+[m[31m-[m
+ server/src/infrastructure/db/schema.ts       |  50 [32m++[m[31m-[m
+ server/src/integrations/agent-adapter.ts     | 104 [32m+++++[m[31m-[m
+ server/test/health.test.ts                   |   4 [32m+[m[31m-[m
+ web/package.json                             |   4 [32m+[m[31m-[m
+ web/src/App.tsx                              | 474 [32m++++++++++++++++++++++++++[m[31m-[m
+ web/src/api/client.ts                        |  92 [32m++++++[m
+ web/src/styles.css                           | 203 [32m++++++++++++[m
+ 18 files changed, 1173 insertions(+), 39 deletions(-)

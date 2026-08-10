@@ -1,6 +1,15 @@
 import fs from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
+import {
+  ObjectiveConflictError,
+  ObjectiveStateError,
+  type ObjectiveService,
+} from '../application/objective-service.js';
+import {
+  SessionStateError,
+  type AgentSessionService,
+} from '../application/agent-session-service.js';
 import { GitRefreshError, type GitStatusService } from '../application/git-status-service.js';
 import type { EventService } from '../application/event-service.js';
 import type { ProjectService } from '../application/project-service.js';
@@ -12,15 +21,17 @@ export interface ApiDeps {
   projects: ProjectService;
   events: EventService;
   gitStatus: GitStatusService;
+  objectives: ObjectiveService;
+  agentSessions: AgentSessionService;
   config: AppConfig;
 }
 
-/** API REST di M2 (Web App/API, §7): registrazione, stato e Git essenziale. */
+/** API REST di M3 (Web App/API, §7): registro progetti, obiettivi e sessioni agente. */
 export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.get('/api/health', async () => ({
     status: 'ok',
     service: 'g-rex-agent-control',
-    version: '0.2.0',
+    version: '0.3.0',
     schemaVersion: SCHEMA_VERSION,
     uptimeSeconds: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
@@ -135,6 +146,98 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       }
       throw err;
     }
+  });
+
+  app.get('/api/projects/:id/objectives', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!deps.projects.getById(id)) {
+      return reply.code(404).send({ message: 'Progetto non trovato' });
+    }
+    return { objectives: deps.objectives.listByProject(id) };
+  });
+
+  app.post('/api/projects/:id/objectives', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const created = await deps.objectives.create(id, req.body);
+      return reply.code(201).send(created);
+    } catch (err) {
+      if (err instanceof ObjectiveConflictError) {
+        return reply.code(409).send({ message: err.message });
+      }
+      if (err instanceof ObjectiveStateError) {
+        return reply.code(404).send({ message: err.message });
+      }
+      if (err instanceof ZodError) {
+        return reply
+          .code(400)
+          .send({ message: "Dati dell'obiettivo non validi", issues: err.issues });
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/objectives/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const detail = deps.objectives.getWithSessions(id);
+    if (!detail) {
+      return reply.code(404).send({ message: 'Obiettivo non trovato' });
+    }
+    return detail;
+  });
+
+  app.post('/api/objectives/:id/sessions/:sessionId/start', async (req, reply) => {
+    const { id, sessionId } = req.params as { id: string; sessionId: string };
+    try {
+      const transition = await deps.agentSessions.start(id, sessionId);
+      return { objective: transition.objective, session: transition.session, project: transition.project };
+    } catch (err) {
+      if (err instanceof SessionStateError) {
+        return reply.code(400).send({ message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/api/objectives/:id/sessions/:sessionId/stop', async (req, reply) => {
+    const { id, sessionId } = req.params as { id: string; sessionId: string };
+    try {
+      const transition = await deps.agentSessions.stop(id, sessionId, req.body ?? {});
+      return { objective: transition.objective, session: transition.session, project: transition.project };
+    } catch (err) {
+      if (err instanceof SessionStateError) {
+        return reply.code(400).send({ message: err.message });
+      }
+      if (err instanceof ZodError) {
+        return reply.code(400).send({ message: 'Dati non validi', issues: err.issues });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/api/objectives/:id/complete', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const transition = await deps.agentSessions.complete(id, req.body ?? {});
+      return { objective: transition.objective, session: transition.session, project: transition.project };
+    } catch (err) {
+      if (err instanceof SessionStateError) {
+        return reply.code(400).send({ message: err.message });
+      }
+      if (err instanceof ZodError) {
+        return reply.code(400).send({ message: 'Report non valido', issues: err.issues });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/api/objectives/:id/cancel', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const cancelled = deps.objectives.cancel(id);
+    if (!cancelled) {
+      return reply.code(404).send({ message: 'Obiettivo non trovato' });
+    }
+    return cancelled;
   });
 
   app.get('/api/events', async (req) => {

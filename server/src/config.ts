@@ -12,6 +12,12 @@ export interface AppConfig {
   dataDir: string;
   dbPath: string;
   logLevel: string;
+  /** Comando della CLI Cline (M3, §8): percorso o nome sul PATH. */
+  clineCommand: string;
+  /** True se l'integrazione Cline è abilitata (GAC_CLINE_ENABLED). */
+  clineEnabled: boolean;
+  /** Adapter agente selezionato: 'fake' per demo/test, 'cline' altrimenti. */
+  agentMode: 'fake' | 'cline';
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -27,11 +33,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const logLevel = env.GAC_LOG_LEVEL?.trim() || 'info';
 
+  // M3: adattatore agente. Di default usa Cline (§8); 'fake' abilita
+  // l'adapter simulato per demo senza CLI installata e per i test.
+  const clineCommand = env.GAC_CLINE_COMMAND?.trim() || 'cline';
+  const clineEnabled = env.GAC_CLINE_ENABLED !== 'false';
+  const agentMode = env.GAC_AGENT_MODE?.trim() === 'fake' ? 'fake' : 'cline';
+
   return {
     host,
     port,
     dataDir,
     dbPath: path.join(dataDir, 'gac.sqlite'),
     logLevel,
+    clineCommand,
+    clineEnabled,
+    agentMode,
   };
 }

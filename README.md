@@ -3,7 +3,7 @@
 Piano di controllo locale per più agenti di sviluppo, conforme alla sorgente di
 verità [`docs/G-Rex-Agent-Control-Progettazione-V1.md`](docs/G-Rex-Agent-Control-Progettazione-V1.md).
 
-**Stato: M2 — Registro progetti e stato.**
+**Stato: M3 — Obiettivi e sessioni agente.**
 
 ## Cosa offre M2
 
@@ -23,6 +23,22 @@ verità [`docs/G-Rex-Agent-Control-Progettazione-V1.md`](docs/G-Rex-Agent-Contro
 - Port **AgentAdapter** astratto (nessuna sessione agente in M2: le sessioni
   Cline arrivano con M3+).
 - Nessun servizio esterno richiesto per il funzionamento locale.
+
+## Cosa offre M3
+
+- **Obiettivi** (§5): un solo obiettivo attivo per progetto (invariante
+  §14), con titolo, testo, invarianti, criteri di accettazione, condizione
+  di stop e snapshot Git di inizio lavoro come evidenza (§6-SYSTEM).
+- **Sessioni agente** (§5): ogni obiettivo nasce con la sua sessione
+  iniziale. Avvio (`ATTIVA` → progetto `IN_LAVORAZIONE`), stop controllato
+  (`INTERROTTA` → obiettivo e progetto `RICHIEDE_ATTENZIONE`),
+  completamento (`COMPLETATA` con report e snapshot Git finale) e
+  annullamento (obiettivo `ANNULLATO`, progetto `FERMO`).
+- **Adapter agente** (§8): `fake` per demo/test deterministici, `cline`
+  per l'integrazione con la CLI Cline (l'avvio reale del processo è
+  pianificato per M4+).
+- La dashboard espone il pannello **Obiettivi e sessioni agente** per ogni
+  progetto registrato.
 
 ## Requisiti
 
@@ -59,7 +75,7 @@ npm run dev:web
 ## Verifiche
 
 ```bash
-npm test       # test automatici (health, API progetti, stato e Git essenziale, persistenza al riavvio)
+npm test       # test automatici (health, API progetti, stato e Git essenziale, obiettivi/sessioni agente, persistenza al riavvio)
 npm run build  # typecheck + build server e web
 npm run verify # build + test (evidenza di accettazione)
 ```
@@ -96,6 +112,13 @@ un repository valido, lo snapshot registra l'errore in modo esplicito.
 | `PATCH` | `/api/projects/:id` | Aggiorna repository e/o obiettivo corrente |
 | `PATCH` | `/api/projects/:id/status` | Imposta lo stato operativo ufficiale |
 | `POST` | `/api/projects/:id/git-status` | Riletta e persiste lo stato Git essenziale |
+| `GET` | `/api/projects/:id/objectives` | Elenca gli obiettivi del progetto |
+| `POST` | `/api/projects/:id/objectives` | Crea un obiettivo (con la sessione iniziale) |
+| `GET` | `/api/objectives/:id` | Dettaglio obiettivo con le sue sessioni |
+| `POST` | `/api/objectives/:id/sessions/:sessionId/start` | Avvia la sessione agente |
+| `POST` | `/api/objectives/:id/sessions/:sessionId/stop` | Ferma la sessione (→ richiede attenzione) |
+| `POST` | `/api/objectives/:id/complete` | Completa l'obiettivo (report + snapshot Git finale) |
+| `POST` | `/api/objectives/:id/cancel` | Annulla l'obiettivo |
 | `GET` | `/api/events` | Eventi recenti (State & Event Store) |
 
 ## Persistenza e configurazione
@@ -109,6 +132,9 @@ d'ambiente opzionali:
 | `GAC_PORT` | `3000` | Porta del server API |
 | `GAC_DATA_DIR` | `./data` | Cartella di persistenza (SQLite) |
 | `GAC_LOG_LEVEL` | `info` | Livello di log Fastify |
+| `GAC_CLINE_COMMAND` | `cline` | Comando della CLI Cline (percorso o nome sul PATH) |
+| `GAC_CLINE_ENABLED` | `true` | Abilita l'adapter Cline (`false` per disabilitarlo) |
+| `GAC_AGENT_MODE` | `cline` | Adapter agente: `fake` (demo/test) o `cline` |
 
 > Per l'invariante di sicurezza (§14) non va configurato un host pubblico
 > (es. `0.0.0.0`).
@@ -122,6 +148,6 @@ docs/     Sorgente di verità progettuale
 ```
 
 La separazione Control Plane / Execution Plane segue §7 del documento di
-progettazione: in M2 esiste solo il Control Plane, che include il registro
-progetti e lo stato operativo; l'Execution Plane (Cline, sessioni, processi)
-arriverà con M3+.
+progettazione: il Control Plane include registro progetti, stato operativo
+e il ciclo obiettivo → sessione agente (M3); l'Execution Plane (avvio
+effettivo dei processi Cline) arriverà con M4+.

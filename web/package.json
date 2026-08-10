@@ -1,9 +1,9 @@
 {
   "name": "g-rex-agent-control-web",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Dashboard PWA responsive di G-Rex Agent Control (M2: registro progetti e stato)",
+  "description": "Dashboard PWA responsive di G-Rex Agent Control (M3: obiettivi e sessioni agente)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

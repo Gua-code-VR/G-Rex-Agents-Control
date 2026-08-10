@@ -1,4 +1,4 @@
-import type { Project } from '../domain/project.js';
+import type { GitStatus, Project } from '../domain/project.js';
 import type { ProjectRepository } from '../infrastructure/db/project-repo.js';
 import { readGitStatus } from '../infrastructure/git/git-status-reader.js';
 import type { EventService } from './event-service.js';
@@ -41,5 +41,16 @@ export class GitStatusService {
     });
 
     return this.projects.getById(projectId);
+  }
+
+  /**
+   * Legge uno snapshot Git immediato senza aggiornare il progetto (§5):
+   * usato come evidenza di inizio/fine lavoro durante il ciclo obiettivo.
+   * Restituisce null se il progetto non esiste o non ha repository.
+   */
+  async readSnapshot(projectId: string): Promise<GitStatus | null> {
+    const project = this.projects.getById(projectId);
+    if (!project || !project.repositoryPath) return null;
+    return readGitStatus(project.repositoryPath);
   }
 }

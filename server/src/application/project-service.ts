@@ -96,4 +96,24 @@ export class ProjectService {
     }
     return updated;
   }
+
+  /**
+   * Allinea l'obiettivo corrente denormalizzato del progetto (§5): viene
+   * chiamato dal ciclo obiettivo (M3) quando un Objective viene creato,
+   * cancellato o subentra come corrente. Aggiorna sia il testo sia l'id
+   * della relazione current_objective_id.
+   */
+  setCurrentObjective(id: string, objectiveId: string | null, title: string | null): Project | null {
+    const updated = this.projects.setCurrentObjective(id, objectiveId, title);
+    if (updated) {
+      this.events.log(EVENT_PROJECT_UPDATED, {
+        projectId: updated.id,
+        payload: {
+          currentObjectiveId: updated.currentObjectiveId,
+          currentObjective: updated.currentObjective,
+        },
+      });
+    }
+    return updated;
+  }
 }

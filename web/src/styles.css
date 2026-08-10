@@ -612,3 +612,206 @@ select {
     min-width: 0;
   }
 }
+
+/*
+ * M3 — Obiettivi e sessioni agente: pannello obiettivo → sessione,
+ * evidenze Git di inizio/fine lavoro e controlli del ciclo (§5).
+ */
+
+.badge-annullato {
+  color: var(--muted);
+}
+
+.badge-attiva {
+  color: var(--accent);
+  border-color: #1c3a2e;
+}
+
+.badge-completata {
+  color: var(--accent);
+  border-color: #1c3a2e;
+}
+
+.badge-interrotta {
+  color: var(--muted);
+  border-color: #334155;
+}
+
+.objectives-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.select-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  max-width: 420px;
+}
+
+.objective-form {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.objective-form h3 {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+}
+
+.objective-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.objective-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.objective-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.objective-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.objective-text {
+  margin: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.objective-list {
+  font-size: 0.82rem;
+}
+
+.objective-list ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.objective-list li {
+  margin-bottom: 2px;
+}
+
+.objective-snapshots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.report-box {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #1c3a2e;
+  background: #0d1526;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.report-box p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+
+.sessions-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.session-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #0d1526;
+  border: 1px solid var(--border);
+}
+
+.session-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-ref {
+  font-size: 0.72rem;
+}
+
+.session-exit {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.session-actions input,
+.session-actions textarea {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.85rem;
+  flex: 1;
+  min-width: 180px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.complete-actions {
+  align-items: stretch;
+}
+
+.objective-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-danger {
+  background: transparent;
+  border: 1px solid #3a1c1c;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #3a1c1c;
+  color: #fecaca;
+}
+
+@media (max-width: 720px) {
+  .objective-grid {
+    grid-template-columns: 1fr;
+  }
+}

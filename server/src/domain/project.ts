@@ -70,11 +70,14 @@ export interface Project {
   /** Gruppo derivato dallo stato ufficiale (per la dashboard M2). */
   statusGroup: ProjectStatusGroup;
   /**
-   * Obiettivo corrente come testo mantenuto da Agent Control. Resta un
-   * placeholder fino all'entità Objective di M3+ (poi diventerà
-   * current_objective_id, §5), senza anticipare M3 qui.
+   * Obiettivo corrente come testo mantenuto da Agent Control. Da M3 il
+   * testo ufficiale è l'entità Objective (§5): questa colonna resta come
+   * denormalizzazione per la dashboard e per i progetti registrati prima
+   * di M3, aggiornata dal ciclo obiettivo (current_objective_id).
    */
   currentObjective: string | null;
+  /** Id dell'Objective corrente (§5: current_objective_id), null se nessuno. */
+  currentObjectiveId: string | null;
   gitStatus: GitStatus | null;
   createdAt: string;
   updatedAt: string;

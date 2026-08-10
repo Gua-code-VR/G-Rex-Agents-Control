@@ -1,0 +1,149 @@
+import { z } from 'zod';
+import type { GitStatus, ProjectStatus } from './project.js';
+
+/**
+ * Stati di un Objective (§5 e §12-M3).
+ *
+ * L'obiettivo nasce IN_AVVIO (assegnato, sessione agente in partenza,
+ * §4), passa IN_LAVORAZIONE quando l'agente è attivo e RICHIEDE_ATTENZIONE
+ * quando l'agente raggiunge lo stop (serve una decisione umana).
+ * BLOCCATO/COMPLETATO/ANNULLATO appartengono alle decisioni umane di M5,
+ * ma l'enum è già quello finale: nessuno stato viene anticipato come
+ * funzionalità, solo come contratto.
+ */
+export const OBJECTIVE_STATUSES = [
+  'IN_AVVIO',
+  'IN_LAVORAZIONE',
+  'RICHIEDE_ATTENZIONE',
+  'BLOCCATO',
+  'COMPLETATO',
+  'ERRORE',
+  'ANNULLATO',
+] as const;
+
+export type ObjectiveStatus = (typeof OBJECTIVE_STATUSES)[number];
+
+/** Stati non terminali: finché esistono, nessun nuovo obiettivo può partire (§3/§14). */
+export const ACTIVE_OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = [
+  'IN_AVVIO',
+  'IN_LAVORAZIONE',
+  'RICHIEDE_ATTENZIONE',
+  'BLOCCATO',
+];
+
+/**
+ * Stati di una AgentSession (§5). La sessione nasce IN_AVVIO insieme
+ * all'obiettivo, diventa ATTIVA con il processo agente e termina in
+ * COMPLETATA (exit 0), ERRORE (fallimento tecnico) o INTERROTTA (stop
+ * controllato dall'operatore).
+ */
+export const SESSION_STATUSES = [
+  'IN_AVVIO',
+  'ATTIVA',
+  'COMPLETATA',
+  'ERRORE',
+  'INTERROTTA',
+] as const;
+
+export type SessionStatus = (typeof SESSION_STATUSES)[number];
+
+/**
+ * Lo stato ufficiale del Project deriva dall'Objective corrente (§5):
+ * ANNULLATO torna a FERMO (nessun obiettivo attivo), tutto il resto
+ * mantiene la stessa semantica degli stati operativi §4.
+ */
+export function objectiveStatusToProjectStatus(status: ObjectiveStatus): ProjectStatus {
+  switch (status) {
+    case 'IN_AVVIO':
+      return 'IN_AVVIO';
+    case 'IN_LAVORAZIONE':
+      return 'IN_LAVORAZIONE';
+    case 'RICHIEDE_ATTENZIONE':
+      return 'RICHIEDE_ATTENZIONE';
+    case 'BLOCCATO':
+      return 'BLOCCATO';
+    case 'COMPLETATO':
+      return 'COMPLETATO';
+    case 'ERRORE':
+      return 'ERRORE';
+    case 'ANNULLATO':
+      return 'FERMO';
+  }
+}
+
+/** Objective (§5): testo, criteri, evidenze Git di inizio/fine lavoro. */
+export interface Objective {
+  id: string;
+  projectId: string;
+  title: string;
+  objectiveText: string;
+  invariants: string[];
+  acceptanceCriteria: string[];
+  stopCondition: string | null;
+  status: ObjectiveStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+  finalReport: string | null;
+  gitStart: GitStatus | null;
+  gitEnd: GitStatus | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** AgentSession (§5): sessione agente legata a un Objective. */
+export interface AgentSession {
+  id: string;
+  objectiveId: string;
+  agentType: string;
+  startedAt: string;
+  endedAt: string | null;
+  status: SessionStatus;
+  lastActivityAt: string | null;
+  processReference: string | null;
+  exitReason: string | null;
+}
+
+export interface CreateObjectiveInput {
+  title: string;
+  objectiveText: string;
+  invariants: string[];
+  acceptanceCriteria: string[];
+  stopCondition: string | null;
+}
+
+/** Lista di vincoli/criteri: una riga per voce, mai vuote. */
+const stringList = z
+  .array(z.string().trim().min(1, 'Voce vuota non ammessa').max(1000))
+  .max(30, 'Troppe voci (massimo 30)')
+  .optional()
+  .transform((v) => v ?? []);
+
+export const createObjectiveSchema = z.object({
+  title: z.string().trim().min(1, "Il titolo dell'obiettivo è obbligatorio").max(200),
+  objectiveText: z
+    .string()
+    .trim()
+    .min(1, "Il testo dell'obiettivo è obbligatorio")
+    .max(8000, "Il testo dell'obiettivo è troppo lungo (massimo 8000 caratteri)"),
+  invariants: stringList,
+  acceptanceCriteria: stringList,
+  stopCondition: z
+    .string()
+    .trim()
+    .max(2000, 'La condizione di stop è troppo lunga (massimo 2000 caratteri)')
+    .optional()
+    .transform((v): string | null => (v ? v : null)),
+});
+
+export interface StopSessionInput {
+  reason?: string | null;
+}
+
+export const stopSessionSchema: z.ZodType<StopSessionInput> = z.object({
+  reason: z
+    .string()
+    .trim()
+    .max(500, 'Motivo troppo lungo (massimo 500 caratteri)')
+    .optional()
+    .transform((v): string | null => (v ? v : null)),
+});
