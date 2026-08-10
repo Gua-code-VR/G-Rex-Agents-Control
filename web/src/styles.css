@@ -815,3 +815,155 @@ select {
     grid-template-columns: 1fr;
   }
 }
+
+/*
+ * M4 — Checkpoint e attenzione umana (§12): badge decisioni pendenti,
+ * esiti dei checkpoint, evidenze classificate (§6) e delta Git.
+ */
+
+.pill-warn {
+  color: #fcd34d;
+  border-color: #4a3a1c;
+}
+
+.btn-warn {
+  background: #fcd34d;
+  color: #3a2a05;
+}
+
+.badge-completed {
+  color: var(--accent);
+  border-color: #1c3a2e;
+}
+
+.badge-interrupted {
+  color: #fcd34d;
+  border-color: #4a3a1c;
+}
+
+.badge-blocked {
+  color: #f472b6;
+  border-color: #4a1c3a;
+}
+
+.badge-error {
+  color: var(--danger);
+  border-color: #3a1c1c;
+}
+
+.badge-pending_decision {
+  color: #fcd34d;
+  border-color: #4a3a1c;
+  font-weight: 700;
+}
+
+.block-fail-actions {
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkpoint-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.checkpoint-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #0d1526;
+  border: 1px solid var(--border);
+}
+
+.checkpoint-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.checkpoint-summary {
+  margin: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.checkpoint-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.checkpoint-sources {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.checkpoint-src {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.checkpoint-src-system {
+  color: #7dd3fc;
+  border-color: #1c3a4f;
+}
+
+.checkpoint-src-agent {
+  color: #c4b5fd;
+  border-color: #2e1c4a;
+}
+
+.checkpoint-evidence-text {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.checkpoint-git {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.checkpoint-recommended {
+  margin: 0;
+}
+
+.checkpoint-warnings {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.82rem;
+  color: #fcd34d;
+}
+
+.checkpoint-warnings li {
+  margin-bottom: 2px;
+}
+
+.checkpoint-ref {
+  margin: 0;
+  color: #c4b5fd;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}

@@ -48,6 +48,8 @@ export interface StatusResponse {
   projectsByStatus: Record<string, number>;
   projectsByGroup: Record<ProjectStatusGroup, number>;
   eventsCount: number;
+  /** M4: checkpoint in attesa di decisione umana. */
+  pendingDecisions: number;
   storage: {
     dbPath: string;
     exists: boolean;
@@ -117,6 +119,45 @@ export interface AgentSession {
   exitReason: string | null;
 }
 
+export type CheckpointOutcome = 'COMPLETED' | 'INTERRUPTED' | 'BLOCKED' | 'ERROR';
+
+export type CheckpointAcceptanceStatus = 'MET' | 'NOT_MET' | 'UNVERIFIED';
+
+export type EvidenceSource = 'SYSTEM' | 'AGENT';
+
+export interface GitDelta {
+  fromBranch: string | null;
+  toBranch: string | null;
+  fromHead: string | null;
+  toHead: string | null;
+  commitChanged: boolean;
+  dirty: boolean;
+  ahead: number | null;
+  behind: number | null;
+  lastCommit: string | null;
+  lastCommitAt: string | null;
+}
+
+/** Checkpoint M4 (§12): esito di sessione in attesa di decisione umana. */
+export interface Checkpoint {
+  id: string;
+  projectId: string;
+  objectiveId: string;
+  sessionId: string | null;
+  outcome: CheckpointOutcome;
+  status: 'PENDING_DECISION';
+  summary: string;
+  acceptanceStatus: CheckpointAcceptanceStatus;
+  evidenceSummary: string;
+  gitDelta: GitDelta | null;
+  testsSummary: string;
+  warnings: string[];
+  recommendedAction: string;
+  fullReportReference: string | null;
+  evidenceSources: EvidenceSource[];
+  createdAt: string;
+}
+
 export interface CreateObjectiveInput {
   title: string;
   objectiveText: string;
@@ -125,16 +166,20 @@ export interface CreateObjectiveInput {
   stopCondition?: string | null;
 }
 
-/** Risposta delle API di transizione sessione/obiettivo (M3). */
+/** Risposta delle API di transizione sessione/obiettivo (M3/M4). */
 export interface ObjectiveTransition {
   objective: Objective;
   session: AgentSession;
   project: Project | null;
+  /** Checkpoint M4 generato da complete/stop/block/fail (assente nell'avvio). */
+  checkpoint?: Checkpoint | null;
 }
 
 export interface ObjectiveDetail {
   objective: Objective;
   sessions: AgentSession[];
+  /** Checkpoint M4 associati all'obiettivo (§12). */
+  checkpoints: Checkpoint[];
 }
 
 export interface CancelObjectiveResponse {
@@ -206,6 +251,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(report ? { report } : {}),
     }),
+  blockObjective: (objectiveId: string, reason?: string) =>
+    request<ObjectiveTransition>(`/api/objectives/${objectiveId}/block`, {
+      method: 'POST',
+      body: JSON.stringify(reason ? { reason } : {}),
+    }),
+  failObjective: (objectiveId: string, error?: string) =>
+    request<ObjectiveTransition>(`/api/objectives/${objectiveId}/fail`, {
+      method: 'POST',
+      body: JSON.stringify(error ? { error } : {}),
+    }),
+  getObjectiveCheckpoints: (objectiveId: string) =>
+    request<{ checkpoints: Checkpoint[] }>(`/api/objectives/${objectiveId}/checkpoints`),
   cancelObjective: (objectiveId: string) =>
     request<CancelObjectiveResponse>(`/api/objectives/${objectiveId}/cancel`, {
       method: 'POST',

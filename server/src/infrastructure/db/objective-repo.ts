@@ -90,7 +90,12 @@ export interface ObjectiveRepository {
   setStatus(id: string, status: ObjectiveStatus): Objective | null;
   setGitStart(id: string, gitStart: GitStatus | null): Objective | null;
   markActive(id: string, status: ObjectiveStatus, startedAt: string): Objective | null;
-  complete(id: string, report: string, gitEnd: GitStatus | null): Objective | null;
+  /** Conclusione del lavoro (§5/M4): report finale, snapshot Git di fine lavoro
+   *  e passaggio a RICHIEDE_ATTENZIONE. L'approvazione (COMPLETATO) arriva
+   *  con le decisioni umane di M5. */
+  conclude(id: string, report: string, gitEnd: GitStatus | null): Objective | null;
+  /** Aggiorna lo snapshot Git di fine lavoro senza cambiare stato (§6-SYSTEM). */
+  setGitEnd(id: string, gitEnd: GitStatus | null): Objective | null;
 }
 
 export interface SessionRepository {
@@ -123,8 +128,10 @@ export class SqliteObjectiveRepository implements ObjectiveRepository {
   private readonly setStatusStmt: StatementSync;
   private readonly setGitStartStmt: StatementSync;
   private readonly markActiveStmt: StatementSync;
-  private readonly completeStmt: StatementSync;
-constructor(db: DatabaseSync) {
+  private readonly concludeStmt: StatementSync;
+  private readonly setGitEndStmt: StatementSync;
+
+  constructor(db: DatabaseSync) {
     this.insertStmt = db.prepare(
       `INSERT INTO objectives
          (id, project_id, title, objective_text, invariants, acceptance_criteria,
@@ -151,10 +158,13 @@ constructor(db: DatabaseSync) {
     this.markActiveStmt = db.prepare(
       'UPDATE objectives SET status = ?, started_at = ?, updated_at = ? WHERE id = ?',
     );
-    this.completeStmt = db.prepare(
+    this.concludeStmt = db.prepare(
       `UPDATE objectives
-       SET status = 'COMPLETATO', completed_at = ?, final_report = ?, git_end = ?, updated_at = ?
+       SET status = 'RICHIEDE_ATTENZIONE', final_report = ?, git_end = ?, updated_at = ?
        WHERE id = ?`,
+    );
+    this.setGitEndStmt = db.prepare(
+      'UPDATE objectives SET git_end = ?, updated_at = ? WHERE id = ?',
     );
   }
 create(projectId: string, input: CreateObjectiveInput): Objective {
@@ -208,10 +218,16 @@ create(projectId: string, input: CreateObjectiveInput): Objective {
     return this.getById(id);
   }
 
-  complete(id: string, report: string, gitEnd: GitStatus | null): Objective | null {
+  conclude(id: string, report: string, gitEnd: GitStatus | null): Objective | null {
     if (!this.getById(id)) return null;
     const now = new Date().toISOString();
-    this.completeStmt.run(now, report, gitEnd ? JSON.stringify(gitEnd) : null, now, id);
+    this.concludeStmt.run(report, gitEnd ? JSON.stringify(gitEnd) : null, now, id);
+    return this.getById(id);
+  }
+
+  setGitEnd(id: string, gitEnd: GitStatus | null): Objective | null {
+    if (!this.getById(id)) return null;
+    this.setGitEndStmt.run(gitEnd ? JSON.stringify(gitEnd) : null, new Date().toISOString(), id);
     return this.getById(id);
   }
 }

@@ -12,7 +12,9 @@ import {
   type ProjectStatusGroup,
   type SessionStatus,
   type StatusResponse,
+  type Checkpoint,
 } from './api/client';
+import { CheckpointList } from './components/CheckpointList';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -221,25 +223,34 @@ function ProjectCard({
 function ObjectiveCard({
   objective,
   sessions,
+  checkpoints,
   busy,
   onStart,
   onStop,
   onComplete,
+  onBlock,
+  onFail,
   onCancel,
 }: {
   objective: Objective;
   sessions: AgentSession[];
+  checkpoints: Checkpoint[];
   busy: boolean;
   onStart: (objectiveId: string, sessionId: string) => void;
   onStop: (objectiveId: string, sessionId: string, reason?: string) => void;
   onComplete: (objectiveId: string, report?: string) => void;
+  onBlock: (objectiveId: string, reason?: string) => void;
+  onFail: (objectiveId: string, detail?: string) => void;
   onCancel: (objectiveId: string) => void;
 }) {
   const [reason, setReason] = useState('');
   const [report, setReport] = useState('');
+  const [blockReason, setBlockReason] = useState('');
+  const [failDetail, setFailDetail] = useState('');
 
   const canCancel = NON_TERMINAL_OBJECTIVE_STATUSES.includes(objective.status);
   const canComplete = OPEN_OBJECTIVE_STATUSES.includes(objective.status);
+  const hasOpenSession = sessions.some((s) => s.status === 'IN_AVVIO' || s.status === 'ATTIVA');
 
   return (
     <article className="objective-card">
@@ -356,6 +367,43 @@ function ObjectiveCard({
         )}
       </div>
 
+      {hasOpenSession && (
+        <div className="objective-card-actions block-fail-actions">
+          <div className="session-actions">
+            <input
+              value={blockReason}
+              onChange={(event) => setBlockReason(event.target.value)}
+              placeholder="Motivo blocco (opzionale)"
+              maxLength={500}
+            />
+            <button
+              type="button"
+              className="btn btn-warn"
+              disabled={busy}
+              onClick={() => onBlock(objective.id, blockReason.trim() || undefined)}
+            >
+              {busy ? 'Blocco…' : 'Blocca obiettivo'}
+            </button>
+          </div>
+          <div className="session-actions">
+            <input
+              value={failDetail}
+              onChange={(event) => setFailDetail(event.target.value)}
+              placeholder="Dettaglio errore (opzionale)"
+              maxLength={1000}
+            />
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={busy}
+              onClick={() => onFail(objective.id, failDetail.trim() || undefined)}
+            >
+              {busy ? 'Invio…' : 'Segnala errore'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {canComplete && (
         <div className="session-actions complete-actions">
           <textarea
@@ -383,6 +431,8 @@ function ObjectiveCard({
           </button>
         </div>
       )}
+
+      <CheckpointList checkpoints={checkpoints} />
     </article>
   );
 }
@@ -391,6 +441,7 @@ function ObjectivesSection({
   projects,
   objectivesByProject,
   sessionsByObjective,
+  checkpointsByObjective,
   selectedProjectId,
   onSelectProject,
   busy,
@@ -399,11 +450,14 @@ function ObjectivesSection({
   onStart,
   onStop,
   onComplete,
+  onBlock,
+  onFail,
   onCancel,
 }: {
   projects: Project[];
   objectivesByProject: Record<string, Objective[]>;
   sessionsByObjective: Record<string, AgentSession[]>;
+  checkpointsByObjective: Record<string, Checkpoint[]>;
   selectedProjectId: string;
   onSelectProject: (id: string) => void;
   busy: Record<string, boolean>;
@@ -412,6 +466,8 @@ function ObjectivesSection({
   onStart: (objectiveId: string, sessionId: string) => void;
   onStop: (objectiveId: string, sessionId: string, reason?: string) => void;
   onComplete: (objectiveId: string, report?: string) => void;
+  onBlock: (objectiveId: string, reason?: string) => void;
+  onFail: (objectiveId: string, detail?: string) => void;
   onCancel: (objectiveId: string) => void;
 }) {
   const [title, setTitle] = useState('');
@@ -539,10 +595,13 @@ function ObjectivesSection({
                   key={objective.id}
                   objective={objective}
                   sessions={sessionsByObjective[objective.id] ?? []}
+                  checkpoints={checkpointsByObjective[objective.id] ?? []}
                   busy={Boolean(busy[objective.id])}
                   onStart={onStart}
                   onStop={onStop}
                   onComplete={onComplete}
+                  onBlock={onBlock}
+                  onFail={onFail}
                   onCancel={onCancel}
                 />
               ))
@@ -575,6 +634,8 @@ export default function App() {
   // M3: obiettivi e sessioni agente.
   const [objectivesByProject, setObjectivesByProject] = useState<Record<string, Objective[]>>({});
   const [sessionsByObjective, setSessionsByObjective] = useState<Record<string, AgentSession[]>>({});
+  // M4: checkpoint esposti dal dettaglio obiettivo (ricaricati a ogni refresh).
+  const [checkpointsByObjective, setCheckpointsByObjective] = useState<Record<string, Checkpoint[]>>({});
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [objectiveBusy, setObjectiveBusy] = useState<Record<string, boolean>>({});
   const [creatingObjective, setCreatingObjective] = useState(false);
@@ -583,16 +644,19 @@ export default function App() {
   const loadM3 = useCallback(async (projectsList: Project[]) => {
     const loadedObjectives: Record<string, Objective[]> = {};
     const loadedSessions: Record<string, AgentSession[]> = {};
+    const loadedCheckpoints: Record<string, Checkpoint[]> = {};
     for (const project of projectsList) {
       const { objectives } = await api.listObjectives(project.id);
       loadedObjectives[project.id] = objectives;
       const details = await Promise.all(objectives.map((o) => api.getObjective(o.id)));
       for (const detail of details) {
         loadedSessions[detail.objective.id] = detail.sessions;
+        loadedCheckpoints[detail.objective.id] = detail.checkpoints;
       }
     }
     setObjectivesByProject(loadedObjectives);
     setSessionsByObjective(loadedSessions);
+    setCheckpointsByObjective(loadedCheckpoints);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -719,6 +783,12 @@ export default function App() {
   const handleComplete = (objectiveId: string, report?: string) =>
     void runObjectiveAction(objectiveId, () => api.completeObjective(objectiveId, report));
 
+  const handleBlock = (objectiveId: string, reason?: string) =>
+    void runObjectiveAction(objectiveId, () => api.blockObjective(objectiveId, reason));
+
+  const handleFail = (objectiveId: string, detail?: string) =>
+    void runObjectiveAction(objectiveId, () => api.failObjective(objectiveId, detail));
+
   const handleCancel = (objectiveId: string) =>
     void runObjectiveAction(objectiveId, () => api.cancelObjective(objectiveId));
 
@@ -731,7 +801,7 @@ export default function App() {
           </span>
           <div>
             <h1>G-Rex Agent Control</h1>
-            <p>Piano di controllo locale degli agenti · M3 Obiettivi e sessioni agente</p>
+            <p>Piano di controllo locale degli agenti · M4 Checkpoint e attenzione umana</p>
           </div>
         </div>
         {status ? (
@@ -740,6 +810,11 @@ export default function App() {
           <span className="pill">Connessione…</span>
         ) : (
           <span className="pill pill-err">API non raggiungibile</span>
+        )}
+        {status && (
+          <span className={`pill ${status.pendingDecisions > 0 ? 'pill-warn' : ''}`}>
+            Decisioni pendenti: {status.pendingDecisions}
+          </span>
         )}
       </header>
 
@@ -859,6 +934,7 @@ export default function App() {
             projects={projects}
             objectivesByProject={objectivesByProject}
             sessionsByObjective={sessionsByObjective}
+            checkpointsByObjective={checkpointsByObjective}
             selectedProjectId={selectedProjectId}
             onSelectProject={setSelectedProjectId}
             busy={objectiveBusy}
@@ -867,6 +943,8 @@ export default function App() {
             onStart={handleStart}
             onStop={handleStop}
             onComplete={handleComplete}
+            onBlock={handleBlock}
+            onFail={handleFail}
             onCancel={handleCancel}
           />
 

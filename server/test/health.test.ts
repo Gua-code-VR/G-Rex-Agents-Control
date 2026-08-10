@@ -25,7 +25,7 @@ describe('M1 - health e stato dashboard', () => {
     expect(body.status).toBe('ok');
     expect(body.service).toBe('g-rex-agent-control');
     expect(body.version).toBe('0.3.0');
-    expect(body.schemaVersion).toBe(3);
+    expect(body.schemaVersion).toBe(4);
     expect(typeof body.uptimeSeconds).toBe('number');
     expect(typeof body.timestamp).toBe('string');
   });
@@ -40,6 +40,8 @@ describe('M1 - health e stato dashboard', () => {
     expect(body.projectsByGroup.IN_LAVORAZIONE).toBe(0);
     expect(body.projectsByGroup.PROBLEMA).toBe(0);
     expect(body.eventsCount).toBeGreaterThanOrEqual(0);
+    // M4: nessuna decisione umana pendente su un database vuoto.
+    expect(body.pendingDecisions).toBe(0);
     expect(body.storage.dbPath).toContain(dataDir);
     expect(body.storage.exists).toBe(true);
     expect(typeof body.generatedAt).toBe('string');

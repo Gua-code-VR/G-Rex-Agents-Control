@@ -5,10 +5,12 @@ import type { DatabaseSync } from 'node:sqlite';
  *
  * v1 → M1 fondazione; v2 → M2 registro progetti (current_objective,
  * git_snapshot); v3 → M3 obiettivi e sessioni agente (tabelle
- * objectives/sessions, colonna projects.current_objective_id).
+ * objectives/sessions, colonna projects.current_objective_id);
+ * v4 → M4 checkpoint e attenzione umana (tabella checkpoints con
+ * evidenze §6 SYSTEM/AGENT, stato PENDING_DECISION).
  * La migrazione è idempotente: DDL IF NOT EXISTS + ALTER TABLE colonne mancanti.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -75,6 +77,29 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_objective_id ON sessions (objective_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions (status);
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  objective_id TEXT NOT NULL,
+  session_id TEXT,
+  outcome TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING_DECISION',
+  summary TEXT NOT NULL,
+  acceptance_status TEXT NOT NULL,
+  evidence_summary TEXT NOT NULL,
+  git_delta TEXT,
+  tests_summary TEXT NOT NULL,
+  warnings TEXT NOT NULL,
+  recommended_action TEXT NOT NULL,
+  full_report_reference TEXT,
+  evidence_sources TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_objective_id ON checkpoints (objective_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_status ON checkpoints (status);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_created_at ON checkpoints (created_at);
 `;
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {

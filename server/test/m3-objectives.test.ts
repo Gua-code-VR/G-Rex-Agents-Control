@@ -186,12 +186,17 @@ describe('M3 - obiettivi e sessioni agente', () => {
       payload: { reason: 'Prima bozza pronta: serve una decisione umana' },
     });
     expect(res.statusCode).toBe(200);
-    const { objective, session, project } = res.json();
+    const { objective, session, project, checkpoint } = res.json();
     expect(session.status).toBe('INTERROTTA');
     expect(session.exitReason).toBe('Prima bozza pronta: serve una decisione umana');
     expect(session.endedAt).toBeTruthy();
     expect(objective.status).toBe('RICHIEDE_ATTENZIONE');
     expect(project.status).toBe('RICHIEDE_ATTENZIONE');
+    // M4: lo stop è una richiesta di intervento → checkpoint PENDING_DECISION.
+    expect(checkpoint).not.toBeNull();
+    expect(checkpoint.outcome).toBe('INTERRUPTED');
+    expect(checkpoint.status).toBe('PENDING_DECISION');
+    expect(checkpoint.summary).toContain('Prima bozza pronta');
   });
 
   it('rifiuta lo stop su una sessione non attiva (400)', async () => {
@@ -222,7 +227,7 @@ describe('M3 - obiettivi e sessioni agente', () => {
     expect(res.json().message).toContain('sessione attiva');
   });
 
-  it.skipIf(!hasGit)('completa l’obiettivo con report e snapshot Git finale', async () => {
+  it.skipIf(!hasGit)('conclude il lavoro con report e snapshot Git finale (M4: resta RICHIEDE_ATTENZIONE)', async () => {
     const repoDir = createGitRepo(dataDir, 'repo-m3-complete', 'commit iniziale M3');
     const created = await built.app.inject({
       method: 'POST',
@@ -250,26 +255,58 @@ describe('M3 - obiettivi e sessioni agente', () => {
     const res = await built.app.inject({
       method: 'POST',
       url: `/api/objectives/${objectiveId}/complete`,
-      payload: { report: 'Obiettivo completato: tutti i test passano.' },
+      payload: {
+        report: 'Obiettivo completato: tutti i test passano.',
+        summary: 'Lavoro completo con test verdi.',
+        acceptanceStatus: 'MET',
+        testsSummary: 'Test passano.',
+        warnings: ['Nessuna'],
+        recommendedAction: 'Procedere con la revisione.',
+      },
     });
     expect(res.statusCode).toBe(200);
-    const { objective, session, project } = res.json();
+    const { objective, session, project, checkpoint } = res.json();
     expect(session.status).toBe('COMPLETATA');
-    expect(objective.status).toBe('COMPLETATO');
-    expect(objective.completedAt).toBeTruthy();
+    // M4: la conclusione NON è l'approvazione. L'obiettivo resta
+    // RICHIEDE_ATTENZIONE con checkpoint PENDING_DECISION: la decisione
+    // umana (COMPLETATO) arriva con M5.
+    expect(objective.status).toBe('RICHIEDE_ATTENZIONE');
+    expect(objective.completedAt).toBeNull();
     expect(objective.finalReport).toBe('Obiettivo completato: tutti i test passano.');
     expect(objective.gitStart).not.toBeNull();
     expect(objective.gitEnd).not.toBeNull();
     expect(objective.gitEnd?.branch).toBe('main');
-    expect(project.status).toBe('COMPLETATO');
+    expect(project.status).toBe('RICHIEDE_ATTENZIONE');
+    expect(checkpoint).not.toBeNull();
+    expect(checkpoint.outcome).toBe('COMPLETED');
+    expect(checkpoint.status).toBe('PENDING_DECISION');
+    expect(checkpoint.summary).toBe('Lavoro completo con test verdi.');
+    expect(checkpoint.acceptanceStatus).toBe('MET');
+    expect(checkpoint.evidenceSources).toEqual(expect.arrayContaining(['SYSTEM', 'AGENT']));
 
-    // Un obiettivo chiuso libera l'invariante §14: un nuovo obiettivo può partire.
+    // M4: RICHIEDE_ATTENZIONE è uno stato non terminale, quindi l'invariante
+    // §14 resta attivo dopo la conclusione: il nuovo obiettivo è rifiutato.
     const again = await built.app.inject({
       method: 'POST',
       url: `/api/projects/${completeProjectId}/objectives`,
-      payload: { title: 'Dopo il completamento', objectiveText: 'L’invariante è libero.' },
+      payload: { title: 'Dopo il completamento', objectiveText: 'L’invariante è ancora attivo.' },
     });
-    expect(again.statusCode).toBe(201);
+    expect(again.statusCode).toBe(409);
+
+    // La decisione umana di M5 chiuderà l'obiettivo; intanto l'annullamento
+    // (già M3) libera l'invariante per un nuovo ciclo.
+    const closed = await built.app.inject({
+      method: 'POST',
+      url: `/api/objectives/${objectiveId}/cancel`,
+    });
+    expect(closed.statusCode).toBe(200);
+
+    const free = await built.app.inject({
+      method: 'POST',
+      url: `/api/projects/${completeProjectId}/objectives`,
+      payload: { title: 'Dopo la chiusura', objectiveText: 'L’invariante è libero.' },
+    });
+    expect(free.statusCode).toBe(201);
   });
 
   it('annulla l’obiettivo: stato FERMO, sessioni aperte interrotte e invariante libero', async () => {
@@ -325,6 +362,8 @@ describe('M3 - obiettivi e sessioni agente', () => {
     expect(types).toContain('session.stopped');
     expect(types).toContain('objective.cancelled');
     expect(types).toContain('session.completed');
+    // M4: ogni esito del ciclo genera anche un checkpoint.
+    expect(types).toContain('checkpoint.created');
   });
 
   it('ricostruisce obiettivi e sessioni dopo il riavvio', async () => {

@@ -13,6 +13,7 @@ import {
 import { GitRefreshError, type GitStatusService } from '../application/git-status-service.js';
 import type { EventService } from '../application/event-service.js';
 import type { ProjectService } from '../application/project-service.js';
+import type { CheckpointRepository } from '../infrastructure/db/checkpoint-repo.js';
 import { PROJECT_GROUPS, PROJECT_STATUSES } from '../domain/project.js';
 import { SCHEMA_VERSION } from '../infrastructure/db/schema.js';
 import type { AppConfig } from '../config.js';
@@ -23,10 +24,12 @@ export interface ApiDeps {
   gitStatus: GitStatusService;
   objectives: ObjectiveService;
   agentSessions: AgentSessionService;
+  checkpoints: CheckpointRepository;
   config: AppConfig;
 }
 
-/** API REST di M3 (Web App/API, §7): registro progetti, obiettivi e sessioni agente. */
+/** API REST di M4 (Web App/API, §7): registro progetti, obiettivi, sessioni
+ *  agente e checkpoint (§5/§6/§12-M4). */
 export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.get('/api/health', async () => ({
     status: 'ok',
@@ -59,6 +62,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       projectsByStatus,
       projectsByGroup,
       eventsCount: deps.events.count(),
+      // M4: decisioni umane ancora da prendere (checkpoint PENDING_DECISION).
+      pendingDecisions: deps.checkpoints.countPending(),
       storage: {
         dbPath: deps.config.dbPath,
         exists: dbExists,
@@ -183,14 +188,28 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     if (!detail) {
       return reply.code(404).send({ message: 'Obiettivo non trovato' });
     }
-    return detail;
+    // M4: il dettaglio espone anche i checkpoint dell'obiettivo.
+    return { ...detail, checkpoints: deps.checkpoints.listByObjective(id) };
+  });
+
+  app.get('/api/objectives/:id/checkpoints', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!deps.objectives.getById(id)) {
+      return reply.code(404).send({ message: 'Obiettivo non trovato' });
+    }
+    return { checkpoints: deps.checkpoints.listByObjective(id) };
   });
 
   app.post('/api/objectives/:id/sessions/:sessionId/start', async (req, reply) => {
     const { id, sessionId } = req.params as { id: string; sessionId: string };
     try {
       const transition = await deps.agentSessions.start(id, sessionId);
-      return { objective: transition.objective, session: transition.session, project: transition.project };
+      return {
+        objective: transition.objective,
+        session: transition.session,
+        project: transition.project,
+        checkpoint: transition.checkpoint,
+      };
     } catch (err) {
       if (err instanceof SessionStateError) {
         return reply.code(400).send({ message: err.message });
@@ -203,7 +222,12 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const { id, sessionId } = req.params as { id: string; sessionId: string };
     try {
       const transition = await deps.agentSessions.stop(id, sessionId, req.body ?? {});
-      return { objective: transition.objective, session: transition.session, project: transition.project };
+      return {
+        objective: transition.objective,
+        session: transition.session,
+        project: transition.project,
+        checkpoint: transition.checkpoint,
+      };
     } catch (err) {
       if (err instanceof SessionStateError) {
         return reply.code(400).send({ message: err.message });
@@ -219,13 +243,60 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const { id } = req.params as { id: string };
     try {
       const transition = await deps.agentSessions.complete(id, req.body ?? {});
-      return { objective: transition.objective, session: transition.session, project: transition.project };
+      return {
+        objective: transition.objective,
+        session: transition.session,
+        project: transition.project,
+        checkpoint: transition.checkpoint,
+      };
     } catch (err) {
       if (err instanceof SessionStateError) {
         return reply.code(400).send({ message: err.message });
       }
       if (err instanceof ZodError) {
         return reply.code(400).send({ message: 'Report non valido', issues: err.issues });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/api/objectives/:id/block', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const transition = await deps.agentSessions.block(id, req.body ?? {});
+      return {
+        objective: transition.objective,
+        session: transition.session,
+        project: transition.project,
+        checkpoint: transition.checkpoint,
+      };
+    } catch (err) {
+      if (err instanceof SessionStateError) {
+        return reply.code(400).send({ message: err.message });
+      }
+      if (err instanceof ZodError) {
+        return reply.code(400).send({ message: 'Dati non validi', issues: err.issues });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/api/objectives/:id/fail', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const transition = await deps.agentSessions.fail(id, req.body ?? {});
+      return {
+        objective: transition.objective,
+        session: transition.session,
+        project: transition.project,
+        checkpoint: transition.checkpoint,
+      };
+    } catch (err) {
+      if (err instanceof SessionStateError) {
+        return reply.code(400).send({ message: err.message });
+      }
+      if (err instanceof ZodError) {
+        return reply.code(400).send({ message: 'Dati non validi', issues: err.issues });
       }
       throw err;
     }
@@ -238,6 +309,14 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       return reply.code(404).send({ message: 'Obiettivo non trovato' });
     }
     return cancelled;
+  });
+
+  app.get('/api/checkpoints', async (req) => {
+    const query = req.query as { limit?: string | number; status?: string } | undefined;
+    const raw = query?.limit;
+    const parsed = typeof raw === 'string' ? Number(raw) : Number(raw ?? 50);
+    const limit = Number.isFinite(parsed) && parsed >= 1 ? parsed : 50;
+    return { checkpoints: deps.checkpoints.listRecent(limit, query?.status) };
   });
 
   app.get('/api/events', async (req) => {

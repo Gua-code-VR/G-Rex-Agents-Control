@@ -34,12 +34,14 @@ export const ACTIVE_OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = [
 /**
  * Stati di una AgentSession (§5). La sessione nasce IN_AVVIO insieme
  * all'obiettivo, diventa ATTIVA con il processo agente e termina in
- * COMPLETATA (exit 0), ERRORE (fallimento tecnico) o INTERROTTA (stop
- * controllato dall'operatore).
+ * COMPLETATA (exit 0), ERRORE (fallimento tecnico), INTERROTTA (stop
+ * controllato dell'operatore) o BLOCCATA (M4: blocco con richiesta di
+ * aiuto umano).
  */
 export const SESSION_STATUSES = [
   'IN_AVVIO',
   'ATTIVA',
+  'BLOCCATA',
   'COMPLETATA',
   'ERRORE',
   'INTERROTTA',
@@ -140,6 +142,20 @@ export interface StopSessionInput {
 }
 
 export const stopSessionSchema: z.ZodType<StopSessionInput> = z.object({
+  reason: z
+    .string()
+    .trim()
+    .max(500, 'Motivo troppo lungo (massimo 500 caratteri)')
+    .optional()
+    .transform((v): string | null => (v ? v : null)),
+});
+
+/** Input del blocco (M4): motivo facoltativo, come per lo stop. */
+export interface BlockSessionInput {
+  reason?: string | null;
+}
+
+export const blockSessionSchema: z.ZodType<BlockSessionInput> = z.object({
   reason: z
     .string()
     .trim()

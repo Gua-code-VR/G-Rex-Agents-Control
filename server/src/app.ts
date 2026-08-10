@@ -2,6 +2,7 @@ import cors from '@fastify/cors';
 import type { DatabaseSync } from 'node:sqlite';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { AgentSessionService } from './application/agent-session-service.js';
+import { CheckpointService } from './application/checkpoint-service.js';
 import { EventService } from './application/event-service.js';
 import { GitStatusService } from './application/git-status-service.js';
 import { ObjectiveService } from './application/objective-service.js';
@@ -10,6 +11,7 @@ import { registerRoutes } from './api/routes.js';
 import { loadConfig, type AppConfig } from './config.js';
 import { ClineAdapter, FakeAgentAdapter, type AgentAdapter } from './integrations/agent-adapter.js';
 import { openDatabase } from './infrastructure/db/connection.js';
+import { SqliteCheckpointRepository } from './infrastructure/db/checkpoint-repo.js';
 import {
   SqliteObjectiveRepository,
   SqliteSessionRepository,
@@ -23,6 +25,7 @@ export interface AppServices {
   gitStatus: GitStatusService;
   objectives: ObjectiveService;
   agentSessions: AgentSessionService;
+  checkpoints: CheckpointService;
   agent: AgentAdapter;
 }
 
@@ -51,6 +54,8 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const gitStatus = new GitStatusService(projectRepository, events);
   const objectiveRepository = new SqliteObjectiveRepository(db);
   const sessionRepository = new SqliteSessionRepository(db);
+  const checkpointRepository = new SqliteCheckpointRepository(db);
+  const checkpoints = new CheckpointService(checkpointRepository, events);
   const agent = buildAgentAdapter(config);
   const objectives = new ObjectiveService(
     objectiveRepository,
@@ -67,6 +72,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     gitStatus,
     events,
     agent,
+    checkpoints,
   );
 
   const app = Fastify({ logger: { level: config.logLevel } });
@@ -76,7 +82,15 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
   });
 
-  registerRoutes(app, { projects, events, gitStatus, objectives, agentSessions, config });
+  registerRoutes(app, {
+    projects,
+    events,
+    gitStatus,
+    objectives,
+    agentSessions,
+    checkpoints: checkpointRepository,
+    config,
+  });
 
   return {
     app,
@@ -87,6 +101,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
       gitStatus,
       objectives,
       agentSessions,
+      checkpoints,
       agent,
     },
   };
