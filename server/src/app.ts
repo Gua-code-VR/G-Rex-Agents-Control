@@ -19,6 +19,8 @@ import {
   SqliteSessionRepository,
 } from './infrastructure/db/objective-repo.js';
 import { SqliteProjectRepository } from './infrastructure/db/project-repo.js';
+import { SqliteExecutionAttemptRepository } from './infrastructure/db/execution-attempt-repo.js';
+import { ProcessSupervisor } from './application/process-supervisor.js';
 
 export interface AppServices {
   db: DatabaseSync;
@@ -59,6 +61,8 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const checkpointRepository = new SqliteCheckpointRepository(db);
   const checkpoints = new CheckpointService(checkpointRepository, events);
   const decisionRepository = new SqliteDecisionRepository(db);
+  const attemptsRepository = new SqliteExecutionAttemptRepository(db);
+  const supervisor = new ProcessSupervisor(attemptsRepository, events);
   const decisions = new DecisionService(
     decisionRepository,
     checkpointRepository,
@@ -84,6 +88,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     events,
     agent,
     checkpoints,
+    supervisor,
   );
 
   const app = Fastify({ logger: { level: config.logLevel } });

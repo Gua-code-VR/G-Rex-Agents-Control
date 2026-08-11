@@ -10,6 +10,7 @@ import type {
   ObjectiveRepository,
   SessionRepository,
 } from '../infrastructure/db/objective-repo.js';
+import type { ProcessSupervisor } from './process-supervisor.js';
 import type { Project } from '../domain/project.js';
 import type { CheckpointService } from './checkpoint-service.js';
 
@@ -68,6 +69,7 @@ export class AgentSessionService {
     private readonly events: EventService,
     private readonly agent: AgentAdapter,
     private readonly checkpoints: CheckpointService,
+    private readonly supervisor: ProcessSupervisor,
   ) {}
 
   /** Avvia la sessione (IN_AVVIO → ATTIVA) e porta obiettivo e progetto IN_LAVORAZIONE. */
@@ -96,6 +98,14 @@ export class AgentSessionService {
     this.sessions.setProcessReference(sessionId, handle.sessionRef);
     this.sessions.setStatus(sessionId, 'ATTIVA');
     this.sessions.touchActivity(sessionId);
+
+    const attempt = await this.supervisor.startAttempt(session, {
+      runtimeType: session.agentType,
+      runtimeName: session.agentType,
+      processReference: handle.sessionRef,
+      metadata: { source: 'agent-session.start' },
+    });
+
     this.objectives.markActive(objectiveId, 'IN_LAVORAZIONE', new Date().toISOString());
     this.projects.setStatus(objective.projectId, { status: 'IN_LAVORAZIONE' });
 
@@ -106,6 +116,7 @@ export class AgentSessionService {
       payload: {
         agentType: handle.agentType,
         sessionRef: handle.sessionRef,
+        executionAttemptId: attempt.id,
       },
     });
 
@@ -138,6 +149,12 @@ export class AgentSessionService {
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
 
     const terminated = this.sessions.terminate(sessionId, 'INTERROTTA', parsed.reason ?? null);
+    await this.supervisor.finalizeLatestAttempt(sessionId, {
+      endedAt: new Date().toISOString(),
+      status: 'CANCELLED',
+      reason: parsed.reason ?? 'Stop controllato',
+      metadata: { finalEvent: 'session.stop' },
+    });
     this.objectives.setStatus(objectiveId, 'RICHIEDE_ATTENZIONE');
     if (gitEnd) this.objectives.setGitEnd(objectiveId, gitEnd);
     this.projects.setStatus(objective.projectId, { status: 'RICHIEDE_ATTENZIONE' });
@@ -185,6 +202,13 @@ export class AgentSessionService {
     const report = parsed.report ?? 'Obiettivo completato';
 
     const terminated = this.sessions.terminate(session.id, 'COMPLETATA', null);
+    await this.supervisor.finalizeLatestAttempt(session.id, {
+      endedAt: new Date().toISOString(),
+      status: 'COMPLETED',
+      exitCode: 0,
+      reason: 'Sessione completata con successo',
+      metadata: { finalEvent: 'session.complete' },
+    });
     this.objectives.conclude(objectiveId, report, gitEnd);
     this.projects.setStatus(objective.projectId, { status: 'RICHIEDE_ATTENZIONE' });
 
@@ -227,6 +251,12 @@ export class AgentSessionService {
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
 
     const terminated = this.sessions.terminate(session.id, 'BLOCCATA', reason);
+    await this.supervisor.finalizeLatestAttempt(session.id, {
+      endedAt: new Date().toISOString(),
+      status: 'CANCELLED',
+      reason,
+      metadata: { finalEvent: 'session.block' },
+    });
     this.objectives.setStatus(objectiveId, 'BLOCCATO');
     if (gitEnd) this.objectives.setGitEnd(objectiveId, gitEnd);
     this.projects.setStatus(objective.projectId, { status: 'BLOCCATO' });
@@ -268,6 +298,13 @@ export class AgentSessionService {
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
 
     const terminated = this.sessions.terminate(session.id, 'ERRORE', detail);
+    await this.supervisor.finalizeLatestAttempt(session.id, {
+      endedAt: new Date().toISOString(),
+      status: 'FAILED',
+      reason: detail,
+      errorClass: 'USER_REPORTED',
+      metadata: { finalEvent: 'session.fail' },
+    });
     this.objectives.setStatus(objectiveId, 'ERRORE');
     if (gitEnd) this.objectives.setGitEnd(objectiveId, gitEnd);
     this.projects.setStatus(objective.projectId, { status: 'ERRORE' });

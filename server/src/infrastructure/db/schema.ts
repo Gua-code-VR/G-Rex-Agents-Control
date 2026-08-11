@@ -99,6 +99,27 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS execution_attempts (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  attempt_index INTEGER NOT NULL,
+  runtime_type TEXT,
+  runtime_name TEXT,
+  provider_name TEXT,
+  model_name TEXT,
+  process_reference TEXT,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  duration_ms INTEGER,
+  exit_code INTEGER,
+  reason TEXT,
+  error_class TEXT,
+  metadata TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_attempts_session_id ON execution_attempts (session_id);
+
 CREATE INDEX IF NOT EXISTS idx_checkpoints_objective_id ON checkpoints (objective_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_status ON checkpoints (status);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_created_at ON checkpoints (created_at);
@@ -131,6 +152,7 @@ export function applySchema(db: DatabaseSync): void {
   // Migrazione v4 → v5: colonne lifecycle sui checkpoints per M5.
   ensureColumn(db, 'checkpoints', 'decided_at', 'decided_at TEXT');
   ensureColumn(db, 'checkpoints', 'decision_type', 'decision_type TEXT');
+  ensureColumn(db, 'execution_attempts', 'metadata', 'metadata TEXT');
   db.prepare(
     `INSERT INTO app_meta (key, value) VALUES ('schema_version', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
