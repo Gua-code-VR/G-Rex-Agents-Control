@@ -77,6 +77,8 @@ export class CheckpointService {
             : null,
       evidenceSources,
       createdAt: new Date().toISOString(),
+      decidedAt: null,
+      decisionType: null,
     };
 
     const stored = this.checkpoints.create(checkpoint);

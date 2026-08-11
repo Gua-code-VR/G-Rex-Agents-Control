@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import type {
   Checkpoint,
   CheckpointAcceptanceStatus,
   CheckpointOutcome,
+  DecisionType,
   EvidenceSource,
   GitDelta,
 } from '../api/client';
@@ -16,6 +18,7 @@ const OUTCOME_LABEL: Record<CheckpointOutcome, string> = {
 
 const STATUS_LABEL: Record<Checkpoint['status'], string> = {
   PENDING_DECISION: 'Decisione pendente',
+  DECIDED: 'Deciso',
 };
 
 const ACCEPTANCE_LABEL: Record<CheckpointAcceptanceStatus, string> = {
@@ -27,6 +30,14 @@ const ACCEPTANCE_LABEL: Record<CheckpointAcceptanceStatus, string> = {
 const SOURCE_LABEL: Record<EvidenceSource, string> = {
   SYSTEM: 'System',
   AGENT: 'Agente',
+  HUMAN: 'Umano',
+};
+
+const DECISION_TYPE_LABEL: Record<DecisionType, string> = {
+  APPROVE: 'Approvato',
+  REQUEST_CHANGES: 'Richieste modifiche',
+  STOP: 'Fermato',
+  CANCEL: 'Annullato',
 };
 
 function formatDate(value: string): string {
@@ -57,12 +68,66 @@ function GitDeltaLine({ delta }: { delta: GitDelta }) {
   );
 }
 
+/** Pulsanti di azione per un checkpoint PENDING_DECISION (M5). */
+function CheckpointDecisionButtons({
+  checkpointId,
+  onDecide,
+  busy,
+}: {
+  checkpointId: string;
+  onDecide: (checkpointId: string, decisionType: DecisionType, note?: string) => void;
+  busy: boolean;
+}) {
+  const [note, setNote] = useState('');
+
+  const handleDecision = (decisionType: DecisionType) => {
+    onDecide(checkpointId, decisionType, note.trim() || undefined);
+    setNote('');
+  };
+
+  return (
+    <div className="checkpoint-decision-actions">
+      <input
+        className="checkpoint-note-input"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Nota (opzionale)"
+        maxLength={5000}
+        disabled={busy}
+      />
+      <div className="checkpoint-buttons">
+        <button type="button" className="btn btn-approve" disabled={busy} onClick={() => handleDecision('APPROVE')}>
+          Approva
+        </button>
+        <button type="button" className="btn" disabled={busy} onClick={() => handleDecision('REQUEST_CHANGES')}>
+          Richiedi modifiche
+        </button>
+        <button type="button" className="btn btn-warn" disabled={busy} onClick={() => handleDecision('STOP')}>
+          Ferma
+        </button>
+        <button type="button" className="btn btn-danger" disabled={busy} onClick={() => handleDecision('CANCEL')}>
+          Annulla
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
- * M4 — Checkpoint di un obiettivo (§12): esito, stato decisione, sintesi,
+ * M4/M5 — Checkpoint di un obiettivo (§12): esito, stato decisione, sintesi,
  * evidenze classificate (§6), delta Git verificato dal sistema e riferimento
- * al rapporto completo. Componente puramente presentazionale.
+ * al rapporto completo. M5: pulsanti di azione per checkpoint pendenti e
+ * visualizzazione dello storico decisioni.
  */
-export function CheckpointList({ checkpoints }: { checkpoints: Checkpoint[] }) {
+export function CheckpointList({
+  checkpoints,
+  onDecide,
+  deciding,
+}: {
+  checkpoints: Checkpoint[];
+  onDecide?: (checkpointId: string, decisionType: DecisionType, note?: string) => void;
+  deciding?: string | null;
+}) {
   if (checkpoints.length === 0) {
     return (
       <div className="checkpoint-box">
@@ -126,6 +191,27 @@ export function CheckpointList({ checkpoints }: { checkpoints: Checkpoint[] }) {
 
           {checkpoint.fullReportReference && (
             <p className="mono checkpoint-ref">Rapporto completo: {checkpoint.fullReportReference}</p>
+          )}
+
+          {/* M5: Decisione presa */}
+          {checkpoint.status === 'DECIDED' && checkpoint.decisionType && (
+            <div className="checkpoint-decision-info">
+              <span className="chip chip-decided">
+                {DECISION_TYPE_LABEL[checkpoint.decisionType]}
+              </span>
+              {checkpoint.decidedAt && (
+                <time className="muted small">{formatDate(checkpoint.decidedAt)}</time>
+              )}
+            </div>
+          )}
+
+          {/* M5: Pulsanti azione per checkpoint pendenti */}
+          {checkpoint.status === 'PENDING_DECISION' && onDecide && (
+            <CheckpointDecisionButtons
+              checkpointId={checkpoint.id}
+              onDecide={onDecide}
+              busy={deciding === checkpoint.id}
+            />
           )}
         </article>
       ))}

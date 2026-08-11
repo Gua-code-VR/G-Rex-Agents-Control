@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { GitStatus } from './project.js';
+import type { DecisionType } from './decision.js';
 
 /**
  * Checkpoint (§5 e §12-M4): la conclusione, la richiesta di intervento,
@@ -28,8 +29,11 @@ export const CHECKPOINT_ACCEPTANCE_STATUSES = ['MET', 'NOT_MET', 'UNVERIFIED'] a
 
 export type CheckpointAcceptanceStatus = (typeof CHECKPOINT_ACCEPTANCE_STATUSES)[number];
 
+/** Stati possibili di un checkpoint (M4 + M5). */
+export type CheckpointStatus = 'PENDING_DECISION' | 'DECIDED';
+
 /** Sorgenti delle evidenze (§6). HUMAN compare solo con le decisioni di M5. */
-export const EVIDENCE_SOURCES = ['SYSTEM', 'AGENT'] as const;
+export const EVIDENCE_SOURCES = ['SYSTEM', 'AGENT', 'HUMAN'] as const;
 
 export type EvidenceSource = (typeof EVIDENCE_SOURCES)[number];
 
@@ -81,8 +85,12 @@ export interface Checkpoint {
   sessionId: string | null;
   /** Esito del checkpoint: fine / richiesta di intervento / blocco / errore. */
   outcome: CheckpointOutcome;
-  /** M4: ogni checkpoint attende una decisione umana (la consumazione è M5). */
-  status: 'PENDING_DECISION';
+  /** Stato del checkpoint nel ciclo decisionale (M4: PENDING_DECISION, M5: DECIDED). */
+  status: 'PENDING_DECISION' | 'DECIDED';
+  /** Timestamp della decisione umana (solo per status DECIDED). */
+  decidedAt: string | null;
+  /** Tipo di decisione presa (solo per status DECIDED). */
+  decisionType: DecisionType | null;
   /** Sintesi della conclusione (§5) --- AGENT o default costruito da Agent Control. */
   summary: string;
   /** Stato rispetto ai criteri di accettazione (§5) --- AGENT o UNVERIFIED. */

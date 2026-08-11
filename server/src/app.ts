@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { AgentSessionService } from './application/agent-session-service.js';
 import { CheckpointService } from './application/checkpoint-service.js';
+import { DecisionService } from './application/decision-service.js';
 import { EventService } from './application/event-service.js';
 import { GitStatusService } from './application/git-status-service.js';
 import { ObjectiveService } from './application/objective-service.js';
@@ -12,6 +13,7 @@ import { loadConfig, type AppConfig } from './config.js';
 import { ClineAdapter, FakeAgentAdapter, type AgentAdapter } from './integrations/agent-adapter.js';
 import { openDatabase } from './infrastructure/db/connection.js';
 import { SqliteCheckpointRepository } from './infrastructure/db/checkpoint-repo.js';
+import { SqliteDecisionRepository } from './infrastructure/db/decision-repo.js';
 import {
   SqliteObjectiveRepository,
   SqliteSessionRepository,
@@ -56,6 +58,15 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const sessionRepository = new SqliteSessionRepository(db);
   const checkpointRepository = new SqliteCheckpointRepository(db);
   const checkpoints = new CheckpointService(checkpointRepository, events);
+  const decisionRepository = new SqliteDecisionRepository(db);
+  const decisions = new DecisionService(
+    decisionRepository,
+    checkpointRepository,
+    objectiveRepository,
+    sessionRepository,
+    projects,
+    events,
+  );
   const agent = buildAgentAdapter(config);
   const objectives = new ObjectiveService(
     objectiveRepository,
@@ -88,6 +99,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     gitStatus,
     objectives,
     agentSessions,
+    decisions,
     checkpoints: checkpointRepository,
     config,
   });

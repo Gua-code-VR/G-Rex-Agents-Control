@@ -123,7 +123,7 @@ export type CheckpointOutcome = 'COMPLETED' | 'INTERRUPTED' | 'BLOCKED' | 'ERROR
 
 export type CheckpointAcceptanceStatus = 'MET' | 'NOT_MET' | 'UNVERIFIED';
 
-export type EvidenceSource = 'SYSTEM' | 'AGENT';
+export type EvidenceSource = 'SYSTEM' | 'AGENT' | 'HUMAN';
 
 export interface GitDelta {
   fromBranch: string | null;
@@ -138,14 +138,14 @@ export interface GitDelta {
   lastCommitAt: string | null;
 }
 
-/** Checkpoint M4 (§12): esito di sessione in attesa di decisione umana. */
+/** Checkpoint M4/M5 (§12): esito di sessione in attesa di decisione umana. */
 export interface Checkpoint {
   id: string;
   projectId: string;
   objectiveId: string;
   sessionId: string | null;
   outcome: CheckpointOutcome;
-  status: 'PENDING_DECISION';
+  status: 'PENDING_DECISION' | 'DECIDED';
   summary: string;
   acceptanceStatus: CheckpointAcceptanceStatus;
   evidenceSummary: string;
@@ -156,6 +156,8 @@ export interface Checkpoint {
   fullReportReference: string | null;
   evidenceSources: EvidenceSource[];
   createdAt: string;
+  decidedAt: string | null;
+  decisionType: DecisionType | null;
 }
 
 export interface CreateObjectiveInput {
@@ -173,6 +175,26 @@ export interface ObjectiveTransition {
   project: Project | null;
   /** Checkpoint M4 generato da complete/stop/block/fail (assente nell'avvio). */
   checkpoint?: Checkpoint | null;
+}
+
+/** M5: Tipo di decisione umana su un checkpoint. */
+export type DecisionType = 'APPROVE' | 'REQUEST_CHANGES' | 'STOP' | 'CANCEL';
+
+/** M5: Record di decisione umana (append-only). */
+export interface HumanDecision {
+  id: string;
+  checkpointId: string;
+  decisionType: DecisionType;
+  note: string | null;
+  decidedAt: string;
+}
+
+/** M5: Risposta dell'API di decisione. */
+export interface DecisionResponse {
+  checkpoint: Checkpoint;
+  decision: HumanDecision;
+  objective: Objective;
+  project: Project | null;
 }
 
 export interface ObjectiveDetail {
@@ -266,6 +288,12 @@ export const api = {
   cancelObjective: (objectiveId: string) =>
     request<CancelObjectiveResponse>(`/api/objectives/${objectiveId}/cancel`, {
       method: 'POST',
+    }),
+  // M5: Decisione umana su checkpoint
+  decideCheckpoint: (checkpointId: string, decisionType: DecisionType, note?: string) =>
+    request<DecisionResponse>(`/api/checkpoints/${checkpointId}/decide`, {
+      method: 'POST',
+      body: JSON.stringify({ decisionType, ...(note ? { note } : {}) }),
     }),
   listEvents: (limit = 50) =>
     request<{ events: EventRecord[] }>(`/api/events?limit=${limit}`),

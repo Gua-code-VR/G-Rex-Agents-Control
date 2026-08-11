@@ -1,9 +1,11 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type {
   Checkpoint,
+  CheckpointStatus,
   EvidenceSource,
   GitDelta,
 } from '../../domain/checkpoint.js';
+import type { DecisionType } from '../../domain/decision.js';
 
 /** Riga persistita della tabella checkpoints (§7: State & Event Store). */
 interface CheckpointRow {
@@ -23,6 +25,8 @@ interface CheckpointRow {
   full_report_reference: string | null;
   evidence_sources: string;
   created_at: string;
+  decided_at: string | null;
+  decision_type: string | null;
 }
 
 function parseGitDelta(raw: string | null): GitDelta | null {
@@ -50,7 +54,7 @@ function toCheckpoint(row: CheckpointRow): Checkpoint {
     objectiveId: row.objective_id,
     sessionId: row.session_id,
     outcome: row.outcome,
-    status: row.status,
+    status: row.status as CheckpointStatus,
     summary: row.summary,
     acceptanceStatus: row.acceptance_status,
     evidenceSummary: row.evidence_summary,
@@ -61,6 +65,8 @@ function toCheckpoint(row: CheckpointRow): Checkpoint {
     fullReportReference: row.full_report_reference,
     evidenceSources: parseJsonList(row.evidence_sources) as EvidenceSource[],
     createdAt: row.created_at,
+    decidedAt: row.decided_at,
+    decisionType: (row.decision_type as DecisionType) ?? null,
   };
 }
 
@@ -70,6 +76,8 @@ export interface CheckpointRepository {
   listByObjective(objectiveId: string): Checkpoint[];
   listRecent(limit: number, status?: string): Checkpoint[];
   countPending(): number;
+  /** M5: segna il checkpoint come DECIDED con tipo e timestamp. */
+  decide(id: string, decisionType: DecisionType, decidedAt: string): Checkpoint | null;
 }
 
 /** Repository SQLite per i Checkpoint M4 (§5/§6/§12-M4). */
@@ -79,6 +87,8 @@ export class SqliteCheckpointRepository implements CheckpointRepository {
   private readonly listByObjStmt: StatementSync;
   private readonly recentStmt: StatementSync;
   private readonly countStmt: StatementSync;
+
+  private readonly decideStmt: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.insertStmt = db.prepare(
@@ -102,6 +112,9 @@ export class SqliteCheckpointRepository implements CheckpointRepository {
     );
     this.countStmt = db.prepare(
       "SELECT COUNT(*) AS n FROM checkpoints WHERE status = 'PENDING_DECISION'",
+    );
+    this.decideStmt = db.prepare(
+      `UPDATE checkpoints SET status = 'DECIDED', decision_type = ?, decided_at = ? WHERE id = ?`,
     );
   }
 
@@ -147,5 +160,11 @@ export class SqliteCheckpointRepository implements CheckpointRepository {
   countPending(): number {
     const row = this.countStmt.get() as { n: number };
     return Number(row.n);
+  }
+
+  decide(id: string, decisionType: DecisionType, decidedAt: string): Checkpoint | null {
+    if (!this.getById(id)) return null;
+    this.decideStmt.run(decisionType, decidedAt, id);
+    return this.getById(id);
   }
 }

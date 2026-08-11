@@ -8,9 +8,11 @@ import type { DatabaseSync } from 'node:sqlite';
  * objectives/sessions, colonna projects.current_objective_id);
  * v4 → M4 checkpoint e attenzione umana (tabella checkpoints con
  * evidenze §6 SYSTEM/AGENT, stato PENDING_DECISION).
+ * v5 → M5 decisioni umane (tabella human_decisions, colonne lifecycle
+ * su checkpoints: decided_at, decision_type).
  * La migrazione è idempotente: DDL IF NOT EXISTS + ALTER TABLE colonne mancanti.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -100,6 +102,16 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 CREATE INDEX IF NOT EXISTS idx_checkpoints_objective_id ON checkpoints (objective_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_status ON checkpoints (status);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_created_at ON checkpoints (created_at);
+
+CREATE TABLE IF NOT EXISTS human_decisions (
+  id TEXT PRIMARY KEY,
+  checkpoint_id TEXT NOT NULL,
+  decision_type TEXT NOT NULL,
+  note TEXT,
+  decided_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_human_decisions_checkpoint_id ON human_decisions (checkpoint_id);
 `;
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
@@ -116,6 +128,9 @@ export function applySchema(db: DatabaseSync): void {
   ensureColumn(db, 'projects', 'git_snapshot', 'git_snapshot TEXT');
   // Migrazione v2 → v3: current_objective_id per la relazione §5 con Objective.
   ensureColumn(db, 'projects', 'current_objective_id', 'current_objective_id TEXT');
+  // Migrazione v4 → v5: colonne lifecycle sui checkpoints per M5.
+  ensureColumn(db, 'checkpoints', 'decided_at', 'decided_at TEXT');
+  ensureColumn(db, 'checkpoints', 'decision_type', 'decision_type TEXT');
   db.prepare(
     `INSERT INTO app_meta (key, value) VALUES ('schema_version', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,

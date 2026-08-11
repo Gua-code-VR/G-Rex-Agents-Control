@@ -96,6 +96,8 @@ export interface ObjectiveRepository {
   conclude(id: string, report: string, gitEnd: GitStatus | null): Objective | null;
   /** Aggiorna lo snapshot Git di fine lavoro senza cambiare stato (§6-SYSTEM). */
   setGitEnd(id: string, gitEnd: GitStatus | null): Objective | null;
+  /** M5: chiude l'obiettivo come COMPLETATO (approvazione umana). */
+  complete(id: string): Objective | null;
 }
 
 export interface SessionRepository {
@@ -130,6 +132,7 @@ export class SqliteObjectiveRepository implements ObjectiveRepository {
   private readonly markActiveStmt: StatementSync;
   private readonly concludeStmt: StatementSync;
   private readonly setGitEndStmt: StatementSync;
+  private readonly completeStmt: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.insertStmt = db.prepare(
@@ -165,6 +168,9 @@ export class SqliteObjectiveRepository implements ObjectiveRepository {
     );
     this.setGitEndStmt = db.prepare(
       'UPDATE objectives SET git_end = ?, updated_at = ? WHERE id = ?',
+    );
+    this.completeStmt = db.prepare(
+      `UPDATE objectives SET status = 'COMPLETATO', completed_at = ?, updated_at = ? WHERE id = ?`,
     );
   }
 create(projectId: string, input: CreateObjectiveInput): Objective {
@@ -228,6 +234,13 @@ create(projectId: string, input: CreateObjectiveInput): Objective {
   setGitEnd(id: string, gitEnd: GitStatus | null): Objective | null {
     if (!this.getById(id)) return null;
     this.setGitEndStmt.run(gitEnd ? JSON.stringify(gitEnd) : null, new Date().toISOString(), id);
+    return this.getById(id);
+  }
+
+  complete(id: string): Objective | null {
+    if (!this.getById(id)) return null;
+    const now = new Date().toISOString();
+    this.completeStmt.run(now, now, id);
     return this.getById(id);
   }
 }

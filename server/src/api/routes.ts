@@ -10,6 +10,11 @@ import {
   SessionStateError,
   type AgentSessionService,
 } from '../application/agent-session-service.js';
+import {
+  DecisionStateError,
+  DecisionTerminalError,
+  type DecisionService,
+} from '../application/decision-service.js';
 import { GitRefreshError, type GitStatusService } from '../application/git-status-service.js';
 import type { EventService } from '../application/event-service.js';
 import type { ProjectService } from '../application/project-service.js';
@@ -24,6 +29,7 @@ export interface ApiDeps {
   gitStatus: GitStatusService;
   objectives: ObjectiveService;
   agentSessions: AgentSessionService;
+  decisions: DecisionService;
   checkpoints: CheckpointRepository;
   config: AppConfig;
 }
@@ -304,11 +310,18 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
 
   app.post('/api/objectives/:id/cancel', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const cancelled = deps.objectives.cancel(id);
-    if (!cancelled) {
-      return reply.code(404).send({ message: 'Obiettivo non trovato' });
+    try {
+      const cancelled = deps.objectives.cancel(id);
+      if (!cancelled) {
+        return reply.code(404).send({ message: 'Obiettivo non trovato' });
+      }
+      return cancelled;
+    } catch (err) {
+      if (err instanceof ObjectiveStateError) {
+        return reply.code(400).send({ message: err.message });
+      }
+      throw err;
     }
-    return cancelled;
   });
 
   app.get('/api/checkpoints', async (req) => {
@@ -317,6 +330,31 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const parsed = typeof raw === 'string' ? Number(raw) : Number(raw ?? 50);
     const limit = Number.isFinite(parsed) && parsed >= 1 ? parsed : 50;
     return { checkpoints: deps.checkpoints.listRecent(limit, query?.status) };
+  });
+
+  // ── M5: Decisione umana su checkpoint ─────────────────────────────────
+  app.post('/api/checkpoints/:id/decide', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const result = deps.decisions.decide(id, req.body ?? {});
+      return reply.code(200).send({
+        checkpoint: result.checkpoint,
+        decision: result.decision,
+        objective: result.objective,
+        project: result.project,
+      });
+    } catch (err) {
+      if (err instanceof DecisionStateError) {
+        return reply.code(400).send({ message: err.message });
+      }
+      if (err instanceof DecisionTerminalError) {
+        return reply.code(409).send({ message: err.message });
+      }
+      if (err instanceof ZodError) {
+        return reply.code(400).send({ message: 'Dati non validi', issues: err.issues });
+      }
+      throw err;
+    }
   });
 
   app.get('/api/events', async (req) => {

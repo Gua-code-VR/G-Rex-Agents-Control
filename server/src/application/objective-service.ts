@@ -108,10 +108,18 @@ export class ObjectiveService {
   /**
    * Annulla l'obiettivo (ANNULLATO): lo stato del progetto torna FERMO e
    * le eventuali sessioni ancora aperte vengono chiuse come INTERROTTE.
+   * D5: rifiuta un obiettivo già COMPLETATO (errore esplicito).
    */
   cancel(id: string): { objective: Objective; project: Project | null } | null {
     const objective = this.objectives.getById(id);
     if (!objective) return null;
+
+    // D5: COMPLETATO è terminale — non si può annullare.
+    if (objective.status === 'COMPLETATO') {
+      throw new ObjectiveStateError(
+        "Impossibile annullare un obiettivo già completato (D5). Crea un nuovo obiettivo se necessario.",
+      );
+    }
 
     for (const session of this.sessions.listByObjective(id)) {
       if (session.status === 'IN_AVVIO' || session.status === 'ATTIVA') {

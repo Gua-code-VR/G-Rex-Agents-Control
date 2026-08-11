@@ -3,6 +3,7 @@ import {
   api,
   type AgentSession,
   type CreateObjectiveInput,
+  type DecisionType,
   type EventRecord,
   type GitStatus,
   type Objective,
@@ -231,6 +232,8 @@ function ObjectiveCard({
   onBlock,
   onFail,
   onCancel,
+  onDecide,
+  deciding,
 }: {
   objective: Objective;
   sessions: AgentSession[];
@@ -242,6 +245,8 @@ function ObjectiveCard({
   onBlock: (objectiveId: string, reason?: string) => void;
   onFail: (objectiveId: string, detail?: string) => void;
   onCancel: (objectiveId: string) => void;
+  onDecide?: (checkpointId: string, decisionType: DecisionType, note?: string) => void;
+  deciding?: string | null;
 }) {
   const [reason, setReason] = useState('');
   const [report, setReport] = useState('');
@@ -432,7 +437,7 @@ function ObjectiveCard({
         </div>
       )}
 
-      <CheckpointList checkpoints={checkpoints} />
+      <CheckpointList checkpoints={checkpoints} onDecide={onDecide} deciding={deciding} />
     </article>
   );
 }
@@ -453,6 +458,8 @@ function ObjectivesSection({
   onBlock,
   onFail,
   onCancel,
+  onDecide,
+  deciding,
 }: {
   projects: Project[];
   objectivesByProject: Record<string, Objective[]>;
@@ -469,6 +476,8 @@ function ObjectivesSection({
   onBlock: (objectiveId: string, reason?: string) => void;
   onFail: (objectiveId: string, detail?: string) => void;
   onCancel: (objectiveId: string) => void;
+  onDecide?: (checkpointId: string, decisionType: DecisionType, note?: string) => void;
+  deciding?: string | null;
 }) {
   const [title, setTitle] = useState('');
   const [objectiveText, setObjectiveText] = useState('');
@@ -603,6 +612,8 @@ function ObjectivesSection({
                   onBlock={onBlock}
                   onFail={onFail}
                   onCancel={onCancel}
+                  onDecide={onDecide}
+                  deciding={deciding}
                 />
               ))
             )}
@@ -792,6 +803,20 @@ export default function App() {
   const handleCancel = (objectiveId: string) =>
     void runObjectiveAction(objectiveId, () => api.cancelObjective(objectiveId));
 
+  // M5: Decisione umana su checkpoint
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const handleDecide = async (checkpointId: string, decisionType: DecisionType, note?: string) => {
+    setDeciding(checkpointId);
+    try {
+      await api.decideCheckpoint(checkpointId, decisionType, note);
+      await refresh();
+    } catch {
+      // errore mostrato dal refresh successivo o silenziosamente
+    } finally {
+      setDeciding(null);
+    }
+  };
+
   return (
     <div className="layout">
       <header className="topbar">
@@ -946,6 +971,8 @@ export default function App() {
             onBlock={handleBlock}
             onFail={handleFail}
             onCancel={handleCancel}
+            onDecide={handleDecide}
+            deciding={deciding}
           />
 
           <section className="card span-2">
