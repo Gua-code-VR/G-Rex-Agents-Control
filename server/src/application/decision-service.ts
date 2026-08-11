@@ -62,7 +62,7 @@ export class DecisionService {
     if (!objective) {
       throw new DecisionStateError('Obiettivo associato non trovato');
     }
-    if (objective.status === 'COMPLETATO' || objective.status === 'ANNULLATO' || objective.status === 'ERRORE') {
+    if (objective.status === 'COMPLETATO' || objective.status === 'ANNULLATO') {
       throw new DecisionTerminalError(
         `L'obiettivo è già in stato terminale (${objective.status}). Impossibile decidere.`,
       );

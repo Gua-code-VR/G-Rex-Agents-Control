@@ -70,6 +70,12 @@ describe('M5 - Approvazione e prosecuzione', () => {
     return res.json().checkpoint.id as string;
   }
 
+  async function errorObjective(objectiveId: string): Promise<string> {
+    const res = await built.app.inject({ method: 'POST', url: `/api/objectives/${objectiveId}/fail`, payload: { error: 'Errore tecnico' } });
+    expect(res.statusCode).toBe(200);
+    return res.json().checkpoint.id as string;
+  }
+
   // AC1: APPROVE chiude checkpoint e obiettivo
   it('AC1 - APPROVE chiude checkpoint e obiettivo', async () => {
     const pid = await newProject('M5 Approve T');
@@ -277,5 +283,32 @@ describe('M5 - Approvazione e prosecuzione', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().objective.status).toBe('COMPLETATO');
     expect(res.json().project.status).toBe('COMPLETATO');
+  });
+
+  it('AC15 - APPROVE su checkpoint ERROR chiude obiettivo', async () => {
+    const pid = await newProject('M5 Approve Error T');
+    const { objectiveId, sessionId } = await newObjective(pid, 'Errore e approva');
+    await startSession(objectiveId, sessionId);
+    const cid = await errorObjective(objectiveId);
+
+    const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().objective.status).toBe('COMPLETATO');
+    expect(res.json().project.status).toBe('COMPLETATO');
+  });
+
+  it('AC16 - REQUEST_CHANGES su checkpoint ERROR lascia obiettivo RICHIEDE_ATTENZIONE', async () => {
+    const pid = await newProject('M5 ReqChg Error T');
+    const { objectiveId, sessionId } = await newObjective(pid, 'Errore e richiedi modifiche');
+    await startSession(objectiveId, sessionId);
+    const cid = await errorObjective(objectiveId);
+
+    const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'REQUEST_CHANGES', note: 'Servono correzioni tecniche.' } });
+    expect(res.statusCode).toBe(200);
+    const b = res.json();
+    expect(b.checkpoint.status).toBe('DECIDED');
+    expect(b.checkpoint.decisionType).toBe('REQUEST_CHANGES');
+    expect(b.objective.status).toBe('RICHIEDE_ATTENZIONE');
+    expect(b.project.status).toBe('RICHIEDE_ATTENZIONE');
   });
 });

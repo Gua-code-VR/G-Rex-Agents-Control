@@ -23,7 +23,7 @@ Nessun avanzamento è automatico: l'operatore conferma esplicitamente.
 | C2 | Lifecycle checkpoint `PENDING_DECISION → DECIDED` | Transizione di stato pulita, estendibile a futuri livelli decisionali |
 | C3 | Servizio `DecisionService` | Logica applicativa centrata sulla decisione: validazione, effetti, eventi |
 | C4 | API decisionale `POST /api/checkpoints/:id/decide` | Contratto HTTP per il web client e per futuri client (mobile M7) |
-| C5 | Effetti della decisione su Objective e Project | Approvazione → COMPLETATO, request changes → nuovo ciclo, stop/cancel → ANNULLATO |
+| C5 | Effetti della decisione su Objective e Project | Approvazione → COMPLETATO, request changes → nuovo ciclo, stop → RICHIEDE_ATTENZIONE, cancel → ANNULLATO |
 | C6 | Sorgente evidenze `HUMAN` | Completa il triangolo SYSTEM/AGENT/HUMAN del §6 |
 | C7 | UI decisionale nel web client | Pulsanti di azione sui checkpoint pendenti + storico decisioni |
 
@@ -109,8 +109,8 @@ Schema version: v4 → v5. DDL idempotente (IF NOT EXISTS + ALTER TABLE).
 | **APPROVE** | `COMPLETED` | → `COMPLETATO` | → `COMPLETATO` | L'obiettivo è concluso e approvato. L'invariante §14 si libera. |
 | **APPROVE** | `INTERRUPTED`, `BLOCKED`, `ERROR` | → `COMPLETATO` (override) | → `COMPLETATO` | L'operatore decide di accettare il risultato nonostante l'esito. |
 | **REQUEST_CHANGES** | qualsiasi | resta `RICHIEDE_ATTENZIONE` | resta `RICHIEDE_ATTENZIONE` | Nessun avanzamento automatico. L'operatore dovrà poi creare una nuova sessione. |
-| **STOP** | qualsiasi | → `ANNULLATO` | → `FERMO` | L'operatore decide di interrompere l'obiettivo. |
-| **CANCEL** | qualsiasi | → `ANNULLATO` | → `FERMO` | Identico a STOP in effetti; semantica diversa per lo storico. |
+| **STOP** | qualsiasi | → `RICHIEDE_ATTENZIONE` | → `RICHIEDE_ATTENZIONE` | L'operatore interrompe il lavoro ma mantiene l'obiettivo aperto per revisione o rilavorazione. |
+| **CANCEL** | qualsiasi | → `ANNULLATO` | → `FERMO` | Annulla l'obiettivo e rilascia il progetto. |
 
 ### Dettaglio APPROVE
 
@@ -207,7 +207,7 @@ Schema version: v4 → v5. DDL idempotente (IF NOT EXISTS + ALTER TABLE).
 | AC1 | APPROVE su checkpoint COMPLETED → objective COMPLETATO, project COMPLETATO | Test + API |
 | AC2 | APPROVE su checkpoint NON-COMPLETED → errore 400 chiaro | Test |
 | AC3 | REQUEST_CHANGES → objective resta RICHIEDE_ATTENZIONE, nessun auto-avvio | Test + API |
-| AC4 | STOP/CANCEL → objective ANNULLATO, sessioni INTERROTTE, project FERMO | Test + API |
+| AC4 | STOP → objective RICHIEDE_ATTENZIONE, CANCEL → objective ANNULLATO, sessioni INTERROTTE, project FERMO | Test + API |
 | AC5 | Il checkpoint passa da PENDING_DECISION a DECIDED dopo ogni decisione | Test + API |
 | AC6 | La HumanDecision è persistita e recoverabile dopo riavvio | Test (buildApp × 2) |
 | AC7 | La decisione è irreversibile: un checkpoint DECIDED non accetta nuove decisioni | Test |
