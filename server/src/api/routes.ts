@@ -40,7 +40,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.get('/api/health', async () => ({
     status: 'ok',
     service: 'g-rex-agent-control',
-    version: '0.3.0',
+    version: '0.4.0',
     schemaVersion: SCHEMA_VERSION,
     uptimeSeconds: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),

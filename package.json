@@ -1,6 +1,6 @@
 {
   "name": "g-rex-agent-control",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "G-Rex Agent Control - piano di controllo locale per più agenti di sviluppo (M3: obiettivi e sessioni agente)",
   "type": "module",
@@ -24,3 +24,4 @@
     "concurrently": "^9.1.0"
   }
 }
+

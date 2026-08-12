@@ -18,6 +18,11 @@ export interface AppConfig {
   clineEnabled: boolean;
   /** Adapter agente selezionato: 'fake' per demo/test, 'cline' altrimenti. */
   agentMode: 'fake' | 'cline';
+  // M7: autenticazione e accesso remoto
+  /** Giorni di durata sessione (default 30). */
+  sessionTtlDays: number;
+  /** true se il server deve bindare su 0.0.0.0 (per Tailscale/VPN). */
+  bindAll: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -39,6 +44,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const clineEnabled = env.GAC_CLINE_ENABLED !== 'false';
   const agentMode = env.GAC_AGENT_MODE?.trim() === 'fake' ? 'fake' : 'cline';
 
+  // M7: sessione e rete
+  const rawTtl = Number(env.GAC_SESSION_TTL_DAYS ?? 30);
+  const sessionTtlDays = Number.isFinite(rawTtl) && rawTtl >= 1 ? rawTtl : 30;
+  const bindAll = env.GAC_BIND_ALL === 'true';
+
   return {
     host,
     port,
@@ -48,5 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     clineCommand,
     clineEnabled,
     agentMode,
+    sessionTtlDays,
+    bindAll,
   };
 }

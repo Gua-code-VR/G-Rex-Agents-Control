@@ -1,13 +1,15 @@
 {
   "name": "G-Rex Agent Control",
   "short_name": "G-Rex Control",
-  "description": "Piano di controllo locale degli agenti di sviluppo",
+  "description": "Pannello di controllo per agenti di sviluppo - accesso locale e remoto via VPN",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#0b1120",
   "theme_color": "#0f172a",
   "lang": "it",
+  "categories": ["developer-tools", "productivity"],
   "icons": [
     {
       "src": "/icon.svg",

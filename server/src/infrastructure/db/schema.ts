@@ -10,9 +10,10 @@ import type { DatabaseSync } from 'node:sqlite';
  * evidenze §6 SYSTEM/AGENT, stato PENDING_DECISION).
  * v5 → M5 decisioni umane (tabella human_decisions, colonne lifecycle
  * su checkpoints: decided_at, decision_type).
+ * v6 → M7 autenticazione applicativa (tabella auth per password hash).
  * La migrazione è idempotente: DDL IF NOT EXISTS + ALTER TABLE colonne mancanti.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -133,6 +134,12 @@ CREATE TABLE IF NOT EXISTS human_decisions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_human_decisions_checkpoint_id ON human_decisions (checkpoint_id);
+
+-- M7: tabella autenticazione (singolo amministratore, §8).
+CREATE TABLE IF NOT EXISTS auth (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {

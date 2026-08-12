@@ -1,3 +1,20 @@
+// ── M7: Auth API ──────────────────────────────────────────────────────
+
+export interface AuthStatus {
+  passwordSet: boolean;
+}
+
+export interface AuthLoginResponse {
+  ok: boolean;
+  expiresAt: string;
+}
+
+export interface AuthMeResponse {
+  authenticated: boolean;
+}
+
+// ── Existing types ────────────────────────────────────────────────────
+
 export type ProjectStatus =
   | 'FERMO'
   | 'IN_AVVIO'
@@ -312,4 +329,25 @@ export const api = {
     const query = params.toString();
     return request<{ events: EventRecord[] }>(`/api/events${query ? `?${query}` : ''}`);
   },
+
+  // M7: Auth API
+  authStatus: () => request<AuthStatus>('/api/auth/status'),
+  authLogin: (password: string) =>
+    request<AuthLoginResponse>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+  authSetup: (password: string) =>
+    request<AuthLoginResponse>('/api/auth/setup', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+  authLogout: () =>
+    request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+  authMe: () => request<AuthMeResponse>('/api/auth/me'),
+  authChangePassword: (currentPassword: string, newPassword: string) =>
+    request<AuthLoginResponse>('/api/auth/change', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
 };
