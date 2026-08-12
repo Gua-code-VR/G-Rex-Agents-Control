@@ -1,5 +1,8 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 
+export const EVENT_CATEGORIES = ['USER', 'TECHNICAL', 'AGENT'] as const;
+export type EventCategory = (typeof EVENT_CATEGORIES)[number];
+
 /**
  * Event Store minimo (§7). In M1 vengono persistiti gli eventi
  * applicativi (avvio/arresto, registrazione progetto). Le categorie
@@ -11,6 +14,7 @@ export interface EventRecord {
   objectiveId: string | null;
   sessionId: string | null;
   type: string;
+  category: EventCategory;
   timestamp: string;
   payload: unknown;
 }
@@ -21,6 +25,7 @@ interface EventRow {
   objective_id: string | null;
   session_id: string | null;
   type: string;
+  category: EventCategory;
   timestamp: string;
   payload: string | null;
 }
@@ -32,6 +37,7 @@ function toEvent(row: EventRow): EventRecord {
     objectiveId: row.objective_id,
     sessionId: row.session_id,
     type: row.type,
+    category: row.category,
     timestamp: row.timestamp,
     payload: row.payload ? (JSON.parse(row.payload) as unknown) : null,
   };
@@ -42,6 +48,7 @@ export interface LogEventOptions {
   objectiveId?: string | null;
   sessionId?: string | null;
   payload?: unknown;
+  category?: EventCategory;
 }
 
 export class EventService {
@@ -51,14 +58,15 @@ export class EventService {
 
   constructor(db: DatabaseSync) {
     this.insertStmt = db.prepare(
-      `INSERT INTO events (project_id, objective_id, session_id, type, timestamp, payload)
-       VALUES (:projectId, :objectiveId, :sessionId, :type, :timestamp, :payload)`,
+      `INSERT INTO events (project_id, objective_id, session_id, type, category, timestamp, payload)
+       VALUES (:projectId, :objectiveId, :sessionId, :type, :category, :timestamp, :payload)`,
     );
     this.recentStmt = db.prepare(
       `SELECT * FROM events
        WHERE (? IS NULL OR project_id = ?)
          AND (? IS NULL OR objective_id = ?)
          AND (? IS NULL OR session_id = ?)
+         AND (? IS NULL OR category = ?)
        ORDER BY id DESC
        LIMIT ?`,
     );
@@ -74,6 +82,7 @@ export class EventService {
       objectiveId: options.objectiveId ?? null,
       sessionId: options.sessionId ?? null,
       type,
+      category: options.category ?? 'TECHNICAL',
       timestamp,
       payload,
     });
@@ -83,6 +92,7 @@ export class EventService {
       objectiveId: options.objectiveId ?? null,
       sessionId: options.sessionId ?? null,
       type,
+      category: options.category ?? 'TECHNICAL',
       timestamp,
       payload: options.payload ?? null,
     };
@@ -93,6 +103,7 @@ export class EventService {
     projectId?: string | null,
     objectiveId?: string | null,
     sessionId?: string | null,
+    category?: EventCategory | null,
   ): EventRecord[] {
     const capped = Math.max(1, Math.min(200, Math.trunc(limit) || 50));
     const rows = this.recentStmt.all(
@@ -102,6 +113,8 @@ export class EventService {
       objectiveId ?? null,
       sessionId ?? null,
       sessionId ?? null,
+      category ?? null,
+      category ?? null,
       capped,
     ) as unknown as EventRow[];
     return rows.map(toEvent);

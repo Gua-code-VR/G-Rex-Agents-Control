@@ -24,6 +24,10 @@ import {
 import { SqliteProjectRepository } from './infrastructure/db/project-repo.js';
 import { SqliteExecutionAttemptRepository } from './infrastructure/db/execution-attempt-repo.js';
 import { ProcessSupervisor } from './application/process-supervisor.js';
+import { NotificationService } from './application/notification-service.js';
+import { SqliteNotificationRepository } from './infrastructure/db/notification-repo.js';
+import { BackupService } from './application/backup-service.js';
+import { StaleSessionDetector, StartupRecoveryService } from './application/stale-detector.js';
 
 export interface AppServices {
   db: DatabaseSync;
@@ -35,6 +39,10 @@ export interface AppServices {
   checkpoints: CheckpointService;
   agent: AgentAdapter;
   auth: AuthService;
+  notifications: NotificationService;
+  backups: BackupService;
+  staleDetector: StaleSessionDetector;
+  startupRecovery: StartupRecoveryService;
 }
 
 export interface BuiltApp {
@@ -57,6 +65,7 @@ export function buildAgentAdapter(config: AppConfig): AgentAdapter {
 export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltApp> {
   const db = openDatabase(config.dbPath);
   const events = new EventService(db);
+  const notifications = new NotificationService(new SqliteNotificationRepository(db), events);
   const projectRepository = new SqliteProjectRepository(db);
   const projects = new ProjectService(projectRepository, events);
   const gitStatus = new GitStatusService(projectRepository, events);
@@ -83,6 +92,15 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     gitStatus,
     events,
     agent,
+    config.heartbeatIntervalMs,
+  );
+  const backups = new BackupService(config, events);
+  const staleDetector = new StaleSessionDetector(
+    sessionRepository, objectiveRepository, projects, notifications, events,
+    { checkIntervalMs: config.staleCheckIntervalMs },
+  );
+  const startupRecovery = new StartupRecoveryService(
+    sessionRepository, objectiveRepository, projects, notifications, events,
   );
   const agentSessions = new AgentSessionService(
     objectiveRepository,
@@ -93,6 +111,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     agent,
     checkpoints,
     supervisor,
+    notifications,
   );
 
   // M7: autenticazione
@@ -149,6 +168,8 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     decisions,
     checkpoints: checkpointRepository,
     config,
+    notifications,
+    backups,
   });
 
   return {
@@ -163,6 +184,10 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
       checkpoints,
       agent,
       auth,
+      notifications,
+      backups,
+      staleDetector,
+      startupRecovery,
     },
   };
 }

@@ -79,6 +79,8 @@ function toSession(row: SessionRow): AgentSession {
     lastActivityAt: row.last_activity_at,
     processReference: row.process_reference,
     exitReason: row.exit_reason,
+    heartbeatIntervalMs: row.heartbeat_interval_ms ?? 30000,
+    lastHeartbeatAt: row.last_heartbeat_at,
   };
 }
 
@@ -102,11 +104,18 @@ export interface ObjectiveRepository {
 
 export interface SessionRepository {
   create(objectiveId: string, agentType: string): AgentSession;
+  createWithHeartbeat(objectiveId: string, agentType: string, heartbeatIntervalMs: number): AgentSession;
   getById(id: string): AgentSession | null;
   listByObjective(objectiveId: string): AgentSession[];
+  /** M8: Lista tutte le sessioni (per recovery all'avvio). */
+  listAll(): AgentSession[];
   setStatus(id: string, status: SessionStatus): AgentSession | null;
   setProcessReference(id: string, processReference: string): AgentSession | null;
   touchActivity(id: string): AgentSession | null;
+  /** M8: Aggiorna l'ultimo heartbeat della sessione. */
+  touchHeartbeat(id: string): AgentSession | null;
+  /** M8: Trova sessioni STALE (senza heartbeat da più dell'intervallo configurato). */
+  findStaleSessions(now: string): AgentSession[];
   terminate(id: string, status: SessionStatus, exitReason: string | null): AgentSession | null;
 }
 interface SessionRow {
@@ -119,6 +128,8 @@ interface SessionRow {
   last_activity_at: string | null;
   process_reference: string | null;
   exit_reason: string | null;
+  heartbeat_interval_ms: number | null;
+  last_heartbeat_at: string | null;
 }
 
 /** Repository SQLite per l'entità Objective (§5). */
@@ -247,11 +258,15 @@ create(projectId: string, input: CreateObjectiveInput): Objective {
 /** Repository SQLite per l'entità AgentSession (§5). */
 export class SqliteSessionRepository implements SessionRepository {
   private readonly insertStmt: StatementSync;
+  private readonly insertWithHeartbeatStmt: StatementSync;
   private readonly getStmt: StatementSync;
   private readonly listByObjStmt: StatementSync;
+  private readonly listAllStmt: StatementSync;
   private readonly setStatusStmt: StatementSync;
   private readonly setRefStmt: StatementSync;
   private readonly touchActivityStmt: StatementSync;
+  private readonly touchHeartbeatStmt: StatementSync;
+  private readonly findStaleStmt: StatementSync;
   private readonly terminateStmt: StatementSync;
 
   constructor(db: DatabaseSync) {
@@ -261,15 +276,31 @@ export class SqliteSessionRepository implements SessionRepository {
        VALUES
          (:id, :objectiveId, :agentType, :startedAt, :status)`,
     );
+    this.insertWithHeartbeatStmt = db.prepare(
+      `INSERT INTO sessions
+         (id, objective_id, agent_type, started_at, status, heartbeat_interval_ms, last_heartbeat_at)
+       VALUES
+         (:id, :objectiveId, :agentType, :startedAt, :status, :heartbeatIntervalMs, :lastHeartbeatAt)`,
+    );
     this.getStmt = db.prepare('SELECT * FROM sessions WHERE id = ?');
     this.listByObjStmt = db.prepare(
       'SELECT * FROM sessions WHERE objective_id = ? ORDER BY started_at ASC',
     );
+    this.listAllStmt = db.prepare('SELECT * FROM sessions ORDER BY started_at ASC');
     this.setStatusStmt = db.prepare('UPDATE sessions SET status = ? WHERE id = ?');
     this.setRefStmt = db.prepare(
       'UPDATE sessions SET process_reference = ?, agent_type = ? WHERE id = ?',
     );
     this.touchActivityStmt = db.prepare('UPDATE sessions SET last_activity_at = ? WHERE id = ?');
+    this.touchHeartbeatStmt = db.prepare(
+      'UPDATE sessions SET last_heartbeat_at = ? WHERE id = ?',
+    );
+    this.findStaleStmt = db.prepare(
+      `SELECT * FROM sessions
+       WHERE status IN ('IN_AVVIO', 'ATTIVA', 'BLOCCATA')
+         AND last_heartbeat_at IS NOT NULL
+         AND (julianday(?) - julianday(last_heartbeat_at)) * 86400000 > heartbeat_interval_ms`,
+    );
     this.terminateStmt = db.prepare(
       'UPDATE sessions SET ended_at = ?, status = ?, exit_reason = ? WHERE id = ?',
     );
@@ -288,6 +319,21 @@ export class SqliteSessionRepository implements SessionRepository {
     return this.getById(id)!;
   }
 
+  createWithHeartbeat(objectiveId: string, agentType: string, heartbeatIntervalMs: number): AgentSession {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    this.insertWithHeartbeatStmt.run({
+      id,
+      objectiveId,
+      agentType,
+      startedAt: now,
+      status: 'IN_AVVIO',
+      heartbeatIntervalMs,
+      lastHeartbeatAt: now,
+    });
+    return this.getById(id)!;
+  }
+
   getById(id: string): AgentSession | null {
     const row = this.getStmt.get(id) as SessionRow | undefined;
     return row ? toSession(row) : null;
@@ -295,6 +341,10 @@ export class SqliteSessionRepository implements SessionRepository {
 
   listByObjective(objectiveId: string): AgentSession[] {
     return (this.listByObjStmt.all(objectiveId) as unknown as SessionRow[]).map(toSession);
+  }
+
+  listAll(): AgentSession[] {
+    return (this.listAllStmt.all() as unknown as SessionRow[]).map(toSession);
   }
 
   setStatus(id: string, status: SessionStatus): AgentSession | null {
@@ -314,6 +364,16 @@ export class SqliteSessionRepository implements SessionRepository {
     if (!this.getById(id)) return null;
     this.touchActivityStmt.run(new Date().toISOString(), id);
     return this.getById(id);
+  }
+
+  touchHeartbeat(id: string): AgentSession | null {
+    if (!this.getById(id)) return null;
+    this.touchHeartbeatStmt.run(new Date().toISOString(), id);
+    return this.getById(id);
+  }
+
+  findStaleSessions(now: string): AgentSession[] {
+    return (this.findStaleStmt.all(now) as unknown as SessionRow[]).map(toSession);
   }
 
   terminate(id: string, status: SessionStatus, exitReason: string | null): AgentSession | null {

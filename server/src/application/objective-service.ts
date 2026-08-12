@@ -4,11 +4,11 @@ import { createObjectiveSchema } from '../domain/objective.js';
 import type { EventService } from './event-service.js';
 import type { GitStatusService } from './git-status-service.js';
 import type { ProjectService } from './project-service.js';
+import type { Project } from '../domain/project.js';
 import type {
   ObjectiveRepository,
   SessionRepository,
 } from '../infrastructure/db/objective-repo.js';
-import type { Project } from '../domain/project.js';
 
 export const EVENT_OBJECTIVE_CREATED = 'objective.created';
 export const EVENT_OBJECTIVE_CANCELLED = 'objective.cancelled';
@@ -39,6 +39,7 @@ export class ObjectiveService {
     private readonly gitStatus: GitStatusService,
     private readonly events: EventService,
     private readonly agent: AgentAdapter,
+    private readonly heartbeatIntervalMs = 30_000,
   ) {}
 
   /**
@@ -67,7 +68,7 @@ export class ObjectiveService {
       this.objectives.setGitStart(objective.id, gitStart);
     }
 
-    const session = this.sessions.create(objective.id, this.agent.agentType);
+    const session = this.sessions.createWithHeartbeat(objective.id, this.agent.agentType, this.heartbeatIntervalMs);
 
     this.projects.setCurrentObjective(projectId, objective.id, objective.title);
     this.projects.setStatus(projectId, { status: 'IN_AVVIO' });

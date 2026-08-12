@@ -11,9 +11,11 @@ import type { DatabaseSync } from 'node:sqlite';
  * v5 → M5 decisioni umane (tabella human_decisions, colonne lifecycle
  * su checkpoints: decided_at, decision_type).
  * v6 → M7 autenticazione applicativa (tabella auth per password hash).
+ * v7 → M8 heartbeat, last_heartbeat_at su sessioni; category su eventi
+ *   (USER/TECHNICAL/AGENT per §11 separazione log).
  * La migrazione è idempotente: DDL IF NOT EXISTS + ALTER TABLE colonne mancanti.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -34,11 +36,13 @@ CREATE TABLE IF NOT EXISTS events (
   session_id TEXT,
   type TEXT NOT NULL,
   timestamp TEXT NOT NULL,
-  payload TEXT
+  payload TEXT,
+  category TEXT NOT NULL DEFAULT 'TECHNICAL'
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_project_id ON events (project_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events (type);
+CREATE INDEX IF NOT EXISTS idx_events_category ON events (category);
 
 CREATE TABLE IF NOT EXISTS app_meta (
   key TEXT PRIMARY KEY,
@@ -75,11 +79,32 @@ CREATE TABLE IF NOT EXISTS sessions (
   status TEXT NOT NULL DEFAULT 'IN_AVVIO',
   last_activity_at TEXT,
   process_reference TEXT,
-  exit_reason TEXT
+  exit_reason TEXT,
+  heartbeat_interval_ms INTEGER,
+  last_heartbeat_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_objective_id ON sessions (objective_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions (status);
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  project_id TEXT,
+  objective_id TEXT,
+  session_id TEXT,
+  checkpoint_id TEXT,
+  error_class TEXT,
+  metadata TEXT,
+  created_at TEXT NOT NULL,
+  read_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_project_id ON notifications (project_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications (read_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications (created_at);
 
 CREATE TABLE IF NOT EXISTS checkpoints (
   id TEXT PRIMARY KEY,
@@ -160,6 +185,13 @@ export function applySchema(db: DatabaseSync): void {
   ensureColumn(db, 'checkpoints', 'decided_at', 'decided_at TEXT');
   ensureColumn(db, 'checkpoints', 'decision_type', 'decision_type TEXT');
   ensureColumn(db, 'execution_attempts', 'metadata', 'metadata TEXT');
+  // Migrazione v6 → v7: M8 heartbeat, last_heartbeat_at su sessioni; category su eventi.
+  ensureColumn(db, 'sessions', 'heartbeat_interval_ms', 'heartbeat_interval_ms INTEGER');
+  ensureColumn(db, 'sessions', 'last_heartbeat_at', 'last_heartbeat_at TEXT');
+  ensureColumn(db, 'events', 'category', "category TEXT NOT NULL DEFAULT 'TECHNICAL'");
+  // Migrazione v7: tabella notifications per M8.
+  // Tabella già creata nel DDL, ma serve per vecchi DB.
+  // (DDL IF NOT EXISTS la crea se manca)
   db.prepare(
     `INSERT INTO app_meta (key, value) VALUES ('schema_version', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,

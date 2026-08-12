@@ -80,6 +80,7 @@ export interface EventRecord {
   objectiveId: string | null;
   sessionId: string | null;
   type: string;
+  category: 'USER' | 'TECHNICAL' | 'AGENT';
   timestamp: string;
   payload: unknown;
 }
@@ -89,6 +90,7 @@ export interface ListEventsOptions {
   projectId?: string;
   objectiveId?: string;
   sessionId?: string;
+  category?: EventRecord['category'];
 }
 
 export interface CreateProjectInput {
@@ -111,7 +113,7 @@ export type ObjectiveStatus =
   | 'ERRORE'
   | 'ANNULLATO';
 
-export type SessionStatus = 'IN_AVVIO' | 'ATTIVA' | 'COMPLETATA' | 'ERRORE' | 'INTERROTTA';
+export type SessionStatus = 'IN_AVVIO' | 'ATTIVA' | 'COMPLETATA' | 'ERRORE' | 'INTERROTTA' | 'BLOCCATA' | 'STALE';
 
 export interface Objective {
   id: string;
@@ -141,6 +143,13 @@ export interface AgentSession {
   lastActivityAt: string | null;
   processReference: string | null;
   exitReason: string | null;
+  heartbeatIntervalMs: number;
+  lastHeartbeatAt: string | null;
+}
+
+export interface Notification {
+  id: string; type: string; severity: 'info' | 'warning' | 'error' | 'critical';
+  title: string; message: string; createdAt: string; readAt: string | null;
 }
 
 export type CheckpointOutcome = 'COMPLETED' | 'INTERRUPTED' | 'BLOCKED' | 'ERROR';
@@ -326,9 +335,13 @@ export const api = {
     if (normalized.projectId) params.append('projectId', normalized.projectId);
     if (normalized.objectiveId) params.append('objectiveId', normalized.objectiveId);
     if (normalized.sessionId) params.append('sessionId', normalized.sessionId);
+    if (normalized.category) params.append('category', normalized.category);
     const query = params.toString();
     return request<{ events: EventRecord[] }>(`/api/events${query ? `?${query}` : ''}`);
   },
+  listNotifications: () => request<{ notifications: Notification[] }>('/api/notifications'),
+  markAllNotificationsRead: () => request<{ count: number }>('/api/notifications/read-all', { method: 'POST' }),
+  createBackup: () => request<{ backup: { directory: string; createdAt: string; files: string[] } }>('/api/backups', { method: 'POST' }),
 
   // M7: Auth API
   authStatus: () => request<AuthStatus>('/api/auth/status'),

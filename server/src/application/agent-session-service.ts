@@ -13,6 +13,8 @@ import type {
 import type { ProcessSupervisor } from './process-supervisor.js';
 import type { Project } from '../domain/project.js';
 import type { CheckpointService } from './checkpoint-service.js';
+import type { NotificationService } from './notification-service.js';
+import { classifyError } from './error-classifier.js';
 
 export const EVENT_SESSION_STARTED = 'session.started';
 export const EVENT_SESSION_STOPPED = 'session.stopped';
@@ -70,6 +72,7 @@ export class AgentSessionService {
     private readonly agent: AgentAdapter,
     private readonly checkpoints: CheckpointService,
     private readonly supervisor: ProcessSupervisor,
+    private readonly notifications?: NotificationService,
   ) {}
 
   /** Avvia la sessione (IN_AVVIO → ATTIVA) e porta obiettivo e progetto IN_LAVORAZIONE. */
@@ -98,6 +101,7 @@ export class AgentSessionService {
     this.sessions.setProcessReference(sessionId, handle.sessionRef);
     this.sessions.setStatus(sessionId, 'ATTIVA');
     this.sessions.touchActivity(sessionId);
+    this.sessions.touchHeartbeat(sessionId);
 
     const attempt = await this.supervisor.startAttempt(session, {
       runtimeType: session.agentType,
@@ -121,6 +125,20 @@ export class AgentSessionService {
     });
 
     return this.transition(objectiveId, sessionId, null);
+  }
+
+  /** Heartbeat authenticated from the agent bridge; it also records normal activity. */
+  async heartbeat(objectiveId: string, sessionId: string): Promise<AgentSession> {
+    const session = this.sessions.getById(sessionId);
+    if (!session || session.objectiveId !== objectiveId) throw new SessionStateError('Sessione non trovata per questo obiettivo');
+    if (session.status !== 'ATTIVA') throw new SessionStateError('La sessione non è attiva');
+    await this.agent.touchHeartbeat(session.processReference ?? session.id);
+    const updated = this.sessions.touchHeartbeat(session.id);
+    this.sessions.touchActivity(session.id);
+    this.events.log('session.heartbeat', {
+      category: 'AGENT', objectiveId, sessionId, payload: { agentType: session.agentType },
+    });
+    return updated!;
   }
 
   /**
@@ -181,6 +199,8 @@ export class AgentSessionService {
       sessionId,
       payload: { reason: parsed.reason ?? null, checkpointId: checkpoint.id },
     });
+    this.notifications?.notifySessionInterrupted({ ...session, projectId: objective.projectId });
+    this.notifications?.notifyCheckpointDecisionRequired({ ...checkpoint, summary: checkpoint.summary });
 
     return this.transition(objectiveId, sessionId, checkpoint);
   }
@@ -231,6 +251,8 @@ export class AgentSessionService {
       sessionId: session.id,
       payload: { hasGitEnd: gitEnd !== null, checkpointId: checkpoint.id },
     });
+    this.notifications?.notifyCheckpointCreated({ ...checkpoint, summary: checkpoint.summary });
+    this.notifications?.notifyCheckpointDecisionRequired({ ...checkpoint, summary: checkpoint.summary });
 
     return this.transition(objectiveId, session.id, checkpoint);
   }
@@ -282,6 +304,7 @@ export class AgentSessionService {
       sessionId: session.id,
       payload: { reason, checkpointId: checkpoint.id },
     });
+    this.notifications?.notifyCheckpointDecisionRequired({ ...checkpoint, summary: checkpoint.summary });
 
     return this.transition(objectiveId, session.id, checkpoint);
   }
@@ -329,6 +352,10 @@ export class AgentSessionService {
       sessionId: session.id,
       payload: { error: detail, checkpointId: checkpoint.id },
     });
+    const errorClass = classifyError(detail);
+    this.notifications?.notifySessionError({ ...session, projectId: objective.projectId, exitReason: detail, errorClass });
+    this.notifications?.notifyObjectiveFailed({ id: objective.id, projectId: objective.projectId, title: objective.title, errorClass });
+    this.notifications?.notifyCheckpointDecisionRequired({ ...checkpoint, summary: checkpoint.summary });
 
     return this.transition(objectiveId, session.id, checkpoint);
   }
@@ -360,4 +387,3 @@ export class AgentSessionService {
     };
   }
 }
-

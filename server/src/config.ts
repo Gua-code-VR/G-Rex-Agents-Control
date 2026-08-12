@@ -23,6 +23,8 @@ export interface AppConfig {
   sessionTtlDays: number;
   /** true se il server deve bindare su 0.0.0.0 (per Tailscale/VPN). */
   bindAll: boolean;
+  heartbeatIntervalMs: number;
+  staleCheckIntervalMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -48,6 +50,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const rawTtl = Number(env.GAC_SESSION_TTL_DAYS ?? 30);
   const sessionTtlDays = Number.isFinite(rawTtl) && rawTtl >= 1 ? rawTtl : 30;
   const bindAll = env.GAC_BIND_ALL === 'true';
+  const heartbeatIntervalMs = positiveMs(env.GAC_HEARTBEAT_INTERVAL_MS, 30_000);
+  const staleCheckIntervalMs = positiveMs(env.GAC_STALE_CHECK_INTERVAL_MS, 30_000);
 
   return {
     host,
@@ -60,5 +64,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     agentMode,
     sessionTtlDays,
     bindAll,
+    heartbeatIntervalMs,
+    staleCheckIntervalMs,
   };
+}
+
+function positiveMs(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1_000 && parsed <= 86_400_000 ? Math.trunc(parsed) : fallback;
 }

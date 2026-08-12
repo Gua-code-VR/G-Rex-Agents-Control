@@ -144,10 +144,14 @@ un repository valido, lo snapshot registra l'errore in modo esplicito.
 | `POST` | `/api/projects/:id/objectives` | Crea un obiettivo (con la sessione iniziale) |
 | `GET` | `/api/objectives/:id` | Dettaglio obiettivo con le sue sessioni |
 | `POST` | `/api/objectives/:id/sessions/:sessionId/start` | Avvia la sessione agente |
+| `POST` | `/api/objectives/:id/sessions/:sessionId/heartbeat` | Registra l'heartbeat dell'agente attivo |
 | `POST` | `/api/objectives/:id/sessions/:sessionId/stop` | Ferma la sessione (→ richiede attenzione) |
 | `POST` | `/api/objectives/:id/complete` | Completa l'obiettivo (report + snapshot Git finale) |
 | `POST` | `/api/objectives/:id/cancel` | Annulla l'obiettivo |
 | `GET` | `/api/events` | Eventi recenti (State & Event Store) |
+| `GET` | `/api/notifications` | Notifiche M8 non lette |
+| `POST` | `/api/notifications/read-all` | Segna tutte le notifiche come lette |
+| `POST` | `/api/backups` | Crea un backup locale di database, configurazione e report |
 
 ## Persistenza e configurazione
 
@@ -163,9 +167,23 @@ d'ambiente opzionali:
 | `GAC_CLINE_COMMAND` | `cline` | Comando della CLI Cline (percorso o nome sul PATH) |
 | `GAC_CLINE_ENABLED` | `true` | Abilita l'adapter Cline (`false` per disabilitarlo) |
 | `GAC_AGENT_MODE` | `cline` | Adapter agente: `fake` (demo/test) o `cline` |
+| `GAC_HEARTBEAT_INTERVAL_MS` | `30000` | Intervallo massimo senza heartbeat prima di dichiarare una sessione stale |
+| `GAC_STALE_CHECK_INTERVAL_MS` | `30000` | Frequenza del controllo automatico delle sessioni stale |
 
 > Per l'invariante di sicurezza (§14) non va configurato un host pubblico
 > (es. `0.0.0.0`).
+
+### M8 — robustezza operativa
+
+Le sessioni attive inviano heartbeat persistiti. Superata la soglia configurata,
+la sessione passa a `STALE`, l'obiettivo/progetto a `ERRORE` e viene creata una
+notifica. Al riavvio, le sessioni non terminali sono riconciliate esplicitamente
+(stale o interrotte), senza assumere vivo alcun processo precedente. La PWA
+mostra e permette di archiviare le notifiche non lette.
+
+Gli eventi sono classificati `USER`, `TECHNICAL` o `AGENT` e filtrabili con
+`GET /api/events?category=...`. I backup timestampati in `data/backups/`
+contengono database SQLite, configurazione non sensibile e report.
 
 ## Struttura
 

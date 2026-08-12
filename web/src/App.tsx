@@ -14,6 +14,7 @@ import {
   type SessionStatus,
   type StatusResponse,
   type Checkpoint,
+  type Notification,
 } from './api/client';
 import { CheckpointList } from './components/CheckpointList';
 import { LoginPage } from './components/LoginPage';
@@ -38,7 +39,7 @@ const OBJECTIVE_STATUS_LABEL: Record<ObjectiveStatus, string> = {
 };
 const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
   IN_AVVIO: 'In avvio', ATTIVA: 'Attiva', COMPLETATA: 'Completata',
-  ERRORE: 'Errore', INTERROTTA: 'Interrotta',
+  ERRORE: 'Errore', INTERROTTA: 'Interrotta', BLOCCATA: 'Bloccata', STALE: 'Inattiva',
 };
 const OPEN_OBJECTIVE_STATUSES: ObjectiveStatus[] = ['IN_AVVIO', 'IN_LAVORAZIONE'];
 const GROUPS: Array<{ key: ProjectStatusGroup; label: string; hint: string }> = [
@@ -398,6 +399,7 @@ export default function App() {
   const [objectiveBusy, setObjectiveBusy] = useState<Record<string, boolean>>({});
   const [creatingObjective, setCreatingObjective] = useState(false);
   const [decidingCheckpoint, setDecidingCheckpoint] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
 
   // M7: Check auth on mount
   useEffect(() => {
@@ -421,13 +423,17 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [sr, pr, er] = await Promise.all([api.status(), api.listProjects(), api.listEvents(30)]);
-      setStatus(sr); setProjects(pr.projects); setEvents(er.events);
+      const [sr, pr, er, nr] = await Promise.all([api.status(), api.listProjects(), api.listEvents(30), api.listNotifications()]);
+      setStatus(sr); setProjects(pr.projects); setEvents(er.events); setNotifications(nr.notifications);
       await loadM3(pr.projects); setLoadState('ready'); setError(null);
     } catch (err) { setLoadState('error'); setError(err instanceof Error ? err.message : String(err)); }
   }, [loadM3]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    const timer = window.setInterval(() => { void api.listNotifications().then((r) => setNotifications(r.notifications)).catch(() => undefined); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => { if (!selectedProjectId && projects.length > 0) setSelectedProjectId(projects[0].id); }, [projects, selectedProjectId]);
   useEffect(() => { if (!historyProjectId && selectedProjectId) setHistoryProjectId(selectedProjectId); }, [selectedProjectId, historyProjectId]);
   useEffect(() => {
@@ -490,6 +496,7 @@ export default function App() {
   const handleBlock = (oId: string, reason?: string) => runObjAction(oId, () => api.blockObjective(oId, reason));
   const handleFail = (oId: string, detail?: string) => runObjAction(oId, () => api.failObjective(oId, detail));
   const handleCancel = (oId: string) => runObjAction(oId, () => api.cancelObjective(oId));
+  const markNotificationsRead = async () => { await api.markAllNotificationsRead(); setNotifications([]); };
   const handleCreateObj = async (input: CreateObjectiveInput) => {
     setCreatingObjective(true); setActionError(null);
     try { await api.createObjective(selectedProjectId, input); await refresh(); }
@@ -531,6 +538,11 @@ export default function App() {
       {loadState === 'loading' ? (
         <main className="app-main"><p className="muted">Caricamento…</p></main>
       ) : (<main className="app-main">
+
+          {notifications.length > 0 && <section className="card" aria-live="polite">
+            <div className="git-box-head"><h2>Notifiche ({notifications.length})</h2><button type="button" className="btn btn-ghost" onClick={() => void markNotificationsRead()}>Segna lette</button></div>
+            <ul className="event-list">{notifications.slice(0, 5).map((notification) => <li key={notification.id}><time>{formatDate(notification.createdAt)}</time><code>{notification.severity}</code><span><strong>{notification.title}</strong> — {notification.message}</span></li>)}</ul>
+          </section>}
 
           {(actionError || formError) && (
             <div className="error-bar" onClick={() => { setActionError(null); setFormError(null); }}>
@@ -664,4 +676,3 @@ export default function App() {
     </div>
   );
 }
-

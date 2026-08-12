@@ -36,7 +36,7 @@ export const ACTIVE_OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = [
  * all'obiettivo, diventa ATTIVA con il processo agente e termina in
  * COMPLETATA (exit 0), ERRORE (fallimento tecnico), INTERROTTA (stop
  * controllato dell'operatore) o BLOCCATA (M4: blocco con richiesta di
- * aiuto umano).
+ * aiuto umano). STALE (M8): sessione senza heartbeat per tempo configurabile.
  */
 export const SESSION_STATUSES = [
   'IN_AVVIO',
@@ -45,9 +45,21 @@ export const SESSION_STATUSES = [
   'COMPLETATA',
   'ERRORE',
   'INTERROTTA',
+  'STALE',
 ] as const;
 
 export type SessionStatus = (typeof SESSION_STATUSES)[number];
+
+/** Classificazione degli errori (M8 §11). */
+export const ERROR_CLASSES = [
+  'AGENT_ERROR',
+  'AGENT_CONTROL_ERROR',
+  'CONNECTIVITY_ERROR',
+  'USER_REPORTED',
+  'UNKNOWN',
+] as const;
+
+export type ErrorClass = (typeof ERROR_CLASSES)[number];
 
 /**
  * Lo stato ufficiale del Project deriva dall'Objective corrente (§5):
@@ -103,6 +115,10 @@ export interface AgentSession {
   lastActivityAt: string | null;
   processReference: string | null;
   exitReason: string | null;
+  /** M8: Heartbeat configurabile per rilevare sessioni STALE. */
+  heartbeatIntervalMs: number;
+  /** M8: Timestamp dell'ultimo heartbeat ricevuto. */
+  lastHeartbeatAt: string | null;
 }
 
 export interface CreateObjectiveInput {

@@ -7,6 +7,8 @@ import { loadConfig } from './config.js';
 async function main(): Promise<void> {
   const config = loadConfig();
   const { app, services } = await buildApp(config);
+  const recovered = services.startupRecovery.recover();
+  services.staleDetector.start();
 
   // M7: servire la PWA built dal web/dist in produzione.
   // Il percorso è relativo alla root del workspace.
@@ -16,7 +18,6 @@ async function main(): Promise<void> {
   await app.register(fastifyStatic, {
     root: webDistPath,
     prefix: '/',
-    decorateReply: false,
     wildcard: false,
   });
   // Fallback per SPA: route non-API non trovate → index.html
@@ -32,7 +33,7 @@ async function main(): Promise<void> {
   await app.listen({ host, port: config.port });
 
   services.events.log(EVENT_APP_STARTED, {
-    payload: { pid: process.pid, version: '0.4.0', bindHost: host },
+    payload: { pid: process.pid, version: '0.4.0', bindHost: host, recovered },
   });
   app.log.info(`G-Rex Agent Control avviato su http://${host}:${config.port}`);
   app.log.info(`Persistenza locale: ${config.dbPath}`);
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info(`Segnale ${signal} ricevuto: arresto in corso`);
     services.events.log(EVENT_APP_STOPPED, { payload: { pid: process.pid } });
+    services.staleDetector.stop();
     await app.close();
     services.db.close();
     process.exit(0);

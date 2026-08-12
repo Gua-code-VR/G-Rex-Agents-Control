@@ -22,6 +22,9 @@ import type { CheckpointRepository } from '../infrastructure/db/checkpoint-repo.
 import { PROJECT_GROUPS, PROJECT_STATUSES } from '../domain/project.js';
 import { SCHEMA_VERSION } from '../infrastructure/db/schema.js';
 import type { AppConfig } from '../config.js';
+import { EVENT_CATEGORIES, type EventCategory } from '../application/event-service.js';
+import type { NotificationService } from '../application/notification-service.js';
+import type { BackupService } from '../application/backup-service.js';
 
 export interface ApiDeps {
   projects: ProjectService;
@@ -32,6 +35,8 @@ export interface ApiDeps {
   decisions: DecisionService;
   checkpoints: CheckpointRepository;
   config: AppConfig;
+  notifications: NotificationService;
+  backups: BackupService;
 }
 
 /** API REST di M4 (Web App/API, §7): registro progetti, obiettivi, sessioni
@@ -224,6 +229,16 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     }
   });
 
+  app.post('/api/objectives/:id/sessions/:sessionId/heartbeat', async (req, reply) => {
+    const { id, sessionId } = req.params as { id: string; sessionId: string };
+    try {
+      return { session: await deps.agentSessions.heartbeat(id, sessionId) };
+    } catch (err) {
+      if (err instanceof SessionStateError) return reply.code(400).send({ message: err.message });
+      throw err;
+    }
+  });
+
   app.post('/api/objectives/:id/sessions/:sessionId/stop', async (req, reply) => {
     const { id, sessionId } = req.params as { id: string; sessionId: string };
     try {
@@ -363,6 +378,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       projectId?: string;
       objectiveId?: string;
       sessionId?: string;
+      category?: string;
     } | undefined;
     const raw = query?.limit;
     const parsed = typeof raw === 'string' ? Number(raw) : Number(raw ?? 50);
@@ -370,8 +386,26 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const projectId = query?.projectId ? String(query.projectId) : null;
     const objectiveId = query?.objectiveId ? String(query.objectiveId) : null;
     const sessionId = query?.sessionId ? String(query.sessionId) : null;
+    const category = EVENT_CATEGORIES.includes(query?.category as EventCategory)
+      ? query?.category as EventCategory : null;
     return {
-      events: deps.events.recent(limit, projectId, objectiveId, sessionId),
+      events: deps.events.recent(limit, projectId, objectiveId, sessionId, category),
     };
   });
+
+  app.get('/api/notifications', async (req) => {
+    const query = req.query as { limit?: string | number } | undefined;
+    const limit = Number(query?.limit ?? 50);
+    return { notifications: deps.notifications.getUnreadNotifications(Number.isFinite(limit) ? limit : 50) };
+  });
+
+  app.post('/api/notifications/:id/read', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const notification = deps.notifications.markAsRead(id);
+    if (!notification) return reply.code(404).send({ message: 'Notifica non trovata' });
+    return { notification };
+  });
+
+  app.post('/api/notifications/read-all', async () => ({ count: deps.notifications.markAllAsRead() }));
+  app.post('/api/backups', async (_req, reply) => reply.code(201).send({ backup: deps.backups.create() }));
 }
