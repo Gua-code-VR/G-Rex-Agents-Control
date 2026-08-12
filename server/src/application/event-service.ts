@@ -54,7 +54,14 @@ export class EventService {
       `INSERT INTO events (project_id, objective_id, session_id, type, timestamp, payload)
        VALUES (:projectId, :objectiveId, :sessionId, :type, :timestamp, :payload)`,
     );
-    this.recentStmt = db.prepare('SELECT * FROM events ORDER BY id DESC LIMIT ?');
+    this.recentStmt = db.prepare(
+      `SELECT * FROM events
+       WHERE (? IS NULL OR project_id = ?)
+         AND (? IS NULL OR objective_id = ?)
+         AND (? IS NULL OR session_id = ?)
+       ORDER BY id DESC
+       LIMIT ?`,
+    );
     this.countStmt = db.prepare('SELECT COUNT(*) AS n FROM events');
   }
 
@@ -81,9 +88,22 @@ export class EventService {
     };
   }
 
-  recent(limit: number): EventRecord[] {
+  recent(
+    limit: number,
+    projectId?: string | null,
+    objectiveId?: string | null,
+    sessionId?: string | null,
+  ): EventRecord[] {
     const capped = Math.max(1, Math.min(200, Math.trunc(limit) || 50));
-    const rows = this.recentStmt.all(capped) as unknown as EventRow[];
+    const rows = this.recentStmt.all(
+      projectId ?? null,
+      projectId ?? null,
+      objectiveId ?? null,
+      objectiveId ?? null,
+      sessionId ?? null,
+      sessionId ?? null,
+      capped,
+    ) as unknown as EventRow[];
     return rows.map(toEvent);
   }
 

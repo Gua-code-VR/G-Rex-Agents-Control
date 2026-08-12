@@ -3,7 +3,7 @@
 Piano di controllo locale per più agenti di sviluppo, conforme alla sorgente di
 verità [`docs/G-Rex-Agent-Control-Progettazione-V1.md`](docs/G-Rex-Agent-Control-Progettazione-V1.md).
 
-**Stato: M3 — Obiettivi e sessioni agente.**
+**Stato: M6 — Storico e tracciabilità.**
 
 ## Cosa offre M2
 
@@ -39,6 +39,34 @@ verità [`docs/G-Rex-Agent-Control-Progettazione-V1.md`](docs/G-Rex-Agent-Contro
   pianificato per M4+).
 - La dashboard espone il pannello **Obiettivi e sessioni agente** per ogni
   progetto registrato.
+
+## Cosa offre M4
+
+- **Checkpoint persistenti** per gli esiti di sessione: `COMPLETED`,
+  `INTERRUPTED`, `BLOCKED`, `ERROR`.
+- Checkpoint in stato `PENDING_DECISION` con evidenze verificate dal
+  sistema e dichiarazioni dell'agente.
+- Contatore `pendingDecisions` in `/api/status` e API REST per elencare
+  e visualizzare checkpoint.
+- Dashboard con storico checkpoint e stato decisionale.
+
+## Cosa offre M5
+
+- **Decisioni umane** su checkpoint `POST /api/checkpoints/:id/decide`.
+- `HumanDecision` persistente e append-only per ogni checkpoint deciso.
+- Effetti deterministici su `Objective` e `Project`:
+  - `APPROVE` → obiettivo `COMPLETATO`, progetto `COMPLETATO`
+  - `REQUEST_CHANGES` → obiettivo/progetto `RICHIEDE_ATTENZIONE`
+  - `STOP` → obiettivo `RICHIEDE_ATTENZIONE`
+  - `CANCEL` → obiettivo `ANNULLATO`, progetto `FERMO`
+- UI del client per decidere direttamente dai checkpoint pendenti.
+
+## Cosa offre M6
+
+- **Storico persistente** e tracciabilità tramite endpoint `GET /api/events`.
+- Filtri per `projectId`, `objectiveId` e `sessionId` sui record storici.
+- Dashboard UI aggiornata per interrogare lo storico filtrato e ricostruire la sequenza degli eventi.
+- Copertura testata con suite completa `npm run verify`.
 
 ## Requisiti
 

@@ -10,7 +10,9 @@ describe('M1 - health e stato dashboard', () => {
   let built: BuiltApp;
 
   beforeAll(async () => {
-    built = await buildApp(loadConfig({ GAC_DATA_DIR: dataDir, GAC_LOG_LEVEL: 'silent' }));
+    built = await buildApp(
+      loadConfig({ GAC_DATA_DIR: dataDir, GAC_LOG_LEVEL: 'silent', GAC_AGENT_MODE: 'fake' }),
+    );
   });
 
   afterAll(async () => {
@@ -51,5 +53,55 @@ describe('M1 - health e stato dashboard', () => {
     const res = await built.app.inject({ method: 'GET', url: '/api/events?limit=5' });
     expect(res.statusCode).toBe(200);
     expect(Array.isArray(res.json().events)).toBe(true);
+  });
+
+  it('GET /api/events filtra gli eventi per progetto e obiettivo', async () => {
+    const project = built.services.projects.register({
+      name: 'history-filter',
+    });
+
+    const created = await built.services.objectives.create(project.id, {
+      title: 'Storico obiettivo',
+      objectiveText: 'Test filtri eventi',
+    });
+    const objectiveId = created.objective.id;
+
+    const res = await built.app.inject({
+      method: 'GET',
+      url: `/api/events?limit=20&projectId=${encodeURIComponent(project.id)}&objectiveId=${encodeURIComponent(objectiveId)}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const events = res.json().events as Array<{ projectId: string | null; objectiveId: string | null }>;
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events.every((event) => event.projectId === project.id && event.objectiveId === objectiveId)).toBe(true);
+  });
+
+  it('GET /api/events filtra gli eventi per sessione', async () => {
+    const project = built.services.projects.register({
+      name: 'history-session-filter',
+    });
+
+    const created = await built.services.objectives.create(project.id, {
+      title: 'Storico sessione',
+      objectiveText: 'Test filtro sessione',
+    });
+    const objectiveId = created.objective.id;
+    const sessionId = created.session.id;
+
+    await built.app.inject({
+      method: 'POST',
+      url: `/api/objectives/${objectiveId}/sessions/${sessionId}/start`,
+    });
+
+    const res = await built.app.inject({
+      method: 'GET',
+      url: `/api/events?limit=20&projectId=${encodeURIComponent(project.id)}&objectiveId=${encodeURIComponent(objectiveId)}&sessionId=${encodeURIComponent(sessionId)}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const events = res.json().events as Array<{ projectId: string | null; objectiveId: string | null; sessionId: string | null }>;
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events.every((event) => event.projectId === project.id && event.objectiveId === objectiveId && event.sessionId === sessionId)).toBe(true);
   });
 });

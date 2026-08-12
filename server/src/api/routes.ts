@@ -358,10 +358,20 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   });
 
   app.get('/api/events', async (req) => {
-    const query = req.query as { limit?: string | number } | undefined;
+    const query = req.query as {
+      limit?: string | number;
+      projectId?: string;
+      objectiveId?: string;
+      sessionId?: string;
+    } | undefined;
     const raw = query?.limit;
     const parsed = typeof raw === 'string' ? Number(raw) : Number(raw ?? 50);
     const limit = Number.isFinite(parsed) && parsed >= 1 ? parsed : 50;
-    return { events: deps.events.recent(limit) };
+    const projectId = query?.projectId ? String(query.projectId) : null;
+    const objectiveId = query?.objectiveId ? String(query.objectiveId) : null;
+    const sessionId = query?.sessionId ? String(query.sessionId) : null;
+    return {
+      events: deps.events.recent(limit, projectId, objectiveId, sessionId),
+    };
   });
 }

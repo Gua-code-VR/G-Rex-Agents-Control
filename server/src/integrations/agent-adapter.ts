@@ -47,38 +47,100 @@ export interface SessionHandle {
  * Il comando è configurabile via `GAC_CLINE_COMMAND` per non dipendere
  * da un percorso hardcoded.
  */
+import { spawn } from 'node:child_process';
+
 export class ClineAdapter implements AgentAdapter {
   readonly agentType = 'cline';
 
-  constructor(
-    private readonly clineCommand: string = 'cline',
-    private readonly enabled: boolean = true,
-  ) {}
+  private readonly clineCommand: string;
+  private readonly enabled: boolean;
+  private readonly processes = new Map<string, ReturnType<typeof spawn>>();
+
+  constructor(clineCommand = 'cline', enabled = true) {
+    this.clineCommand = clineCommand;
+    this.enabled = enabled;
+  }
 
   isConfigured(): boolean {
-    return this.enabled;
+    if (!this.enabled) return false;
+    try {
+      const where = process.platform === 'win32' ? 'where' : 'which';
+      const res = require('child_process').spawnSync(where, [this.clineCommand], { encoding: 'utf8' });
+      return Boolean(res && res.status === 0 && res.stdout && res.stdout.trim().length > 0);
+    } catch (err) {
+      return false;
+    }
   }
 
-  async startSession(_params: StartSessionParams): Promise<SessionHandle> {
-    // M3: l'avvio effettivo del processo Cline è un'operazione di Execution
-    // Plane che richiede la CLI installata. Il Control Plane registra la
-    // sessione e delega l'avvio. In questa fase restituiamo un riferimento
-    // che identifica il comando che verrà invocato (M4+).
-    return {
-      sessionRef: `${this.clineCommand}-${Date.now()}`,
-      agentType: this.agentType,
-    };
+  async startSession(params: StartSessionParams): Promise<SessionHandle> {
+    if (!this.isConfigured()) {
+      return {
+        sessionRef: `cline-fallback-${Date.now()}`,
+        agentType: this.agentType,
+      };
+    }
+
+    const args: string[] = ['--headless', '--json'];
+    const opts: any = {};
+    if (params.projectPath) opts.cwd = params.projectPath;
+
+    const child = spawn(this.clineCommand, args, { stdio: ['pipe', 'pipe', 'pipe'], ...opts });
+    const sessionRef = `cline:${child.pid}:${Date.now()}`;
+    this.processes.set(sessionRef, child);
+
+    try {
+      const input = JSON.stringify({ objectiveText: params.objectiveText, stopCondition: params.stopCondition ?? null });
+      child.stdin.write(input);
+      child.stdin.end();
+    } catch (err) {
+      // ignore
+    }
+
+    let buffer = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      buffer += chunk;
+      let idx: number;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line) continue;
+        try {
+          const parsed = JSON.parse(line);
+          console.info('[cline]', sessionRef, parsed);
+        } catch (err) {
+          console.debug('[cline][raw]', sessionRef, line);
+        }
+      }
+    });
+
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (d: string) => {
+      console.warn('[cline][err]', sessionRef, d.toString());
+    });
+
+    child.on('exit', (code, signal) => {
+      console.info('[cline][exit]', sessionRef, { code, signal });
+      this.processes.delete(sessionRef);
+    });
+
+    return { sessionRef, agentType: this.agentType };
   }
 
-  async stopSession(_sessionRef: string, _reason?: string): Promise<void> {
-    // L'arresto effettivo del processo Cline è un'operazione di Execution
-    // Plane. Il Control Plane registra lo stop e lo stato; l'invio del
-    // segnale al processo sarà integrato in M4+.
+  async stopSession(sessionRef: string, _reason?: string): Promise<void> {
+    const child = this.processes.get(sessionRef);
+    if (!child) return;
+    try {
+      if (!child.killed) child.kill();
+    } catch (err) {
+      // ignore
+    } finally {
+      this.processes.delete(sessionRef);
+    }
   }
 
   async touchHeartbeat(_sessionRef: string): Promise<void> {
-    // Il heartbeat effettivo dipende dal processo Cline; per ora il Control
-    // Plane registra il timestamp senza inviare comandi esterni.
+    // no-op for now
   }
 }
 

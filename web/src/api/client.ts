@@ -67,6 +67,13 @@ export interface EventRecord {
   payload: unknown;
 }
 
+export interface ListEventsOptions {
+  limit?: number;
+  projectId?: string;
+  objectiveId?: string;
+  sessionId?: string;
+}
+
 export interface CreateProjectInput {
   name: string;
   repositoryPath?: string;
@@ -295,6 +302,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ decisionType, ...(note ? { note } : {}) }),
     }),
-  listEvents: (limit = 50) =>
-    request<{ events: EventRecord[] }>(`/api/events?limit=${limit}`),
+  listEvents: (options: number | ListEventsOptions = 50) => {
+    const normalized = typeof options === 'number' ? { limit: options } : options ?? {};
+    const params = new URLSearchParams();
+    if (normalized.limit !== undefined) params.append('limit', String(normalized.limit));
+    if (normalized.projectId) params.append('projectId', normalized.projectId);
+    if (normalized.objectiveId) params.append('objectiveId', normalized.objectiveId);
+    if (normalized.sessionId) params.append('sessionId', normalized.sessionId);
+    const query = params.toString();
+    return request<{ events: EventRecord[] }>(`/api/events${query ? `?${query}` : ''}`);
+  },
 };

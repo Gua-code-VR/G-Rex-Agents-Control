@@ -628,6 +628,12 @@ export default function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [events, setEvents] = useState<EventRecord[]>([]);
+  const [historyEvents, setHistoryEvents] = useState<EventRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyProjectId, setHistoryProjectId] = useState('');
+  const [historyObjectiveId, setHistoryObjectiveId] = useState('');
+  const [historySessionId, setHistorySessionId] = useState('');
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -699,6 +705,34 @@ export default function App() {
       setSelectedProjectId(projects[0].id);
     }
   }, [projects, selectedProjectId]);
+
+  useEffect(() => {
+    if (!historyProjectId && selectedProjectId) {
+      setHistoryProjectId(selectedProjectId);
+    }
+  }, [selectedProjectId, historyProjectId]);
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      setHistoryLoading(true);
+      setHistoryError(null);
+      try {
+        const response = await api.listEvents({
+          limit: 100,
+          projectId: historyProjectId || undefined,
+          objectiveId: historyObjectiveId || undefined,
+          sessionId: historySessionId || undefined,
+        });
+        setHistoryEvents(response.events);
+      } catch (err) {
+        setHistoryError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+
+    void loadHistory();
+  }, [historyProjectId, historyObjectiveId, historySessionId]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -982,6 +1016,71 @@ export default function App() {
             ) : (
               <ul className="event-list">
                 {events.map((event) => (
+                  <li key={event.id}>
+                    <time>{formatDate(event.timestamp)}</time>
+                    <code>{event.type}</code>
+                    <span>{event.payload ? JSON.stringify(event.payload) : ''}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="card span-2">
+            <h2>Cronologia storica</h2>
+            <div className="filter-row">
+              <label className="select-label">
+                Progetto
+                <select value={historyProjectId} onChange={(event) => {
+                  setHistoryProjectId(event.target.value);
+                  setHistoryObjectiveId('');
+                  setHistorySessionId('');
+                }}>
+                  <option value="">— Tutti i progetti —</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {historyProjectId && (
+                <label className="select-label">
+                  Obiettivo
+                  <select value={historyObjectiveId} onChange={(event) => {
+                    setHistoryObjectiveId(event.target.value);
+                    setHistorySessionId('');
+                  }}>
+                    <option value="">— Tutti gli obiettivi —</option>
+                    {(objectivesByProject[historyProjectId] ?? []).map((objective) => (
+                      <option key={objective.id} value={objective.id}>
+                        {objective.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {historyObjectiveId && (sessionsByObjective[historyObjectiveId]?.length ?? 0) > 0 && (
+                <label className="select-label">
+                  Sessione
+                  <select value={historySessionId} onChange={(event) => setHistorySessionId(event.target.value)}>
+                    <option value="">— Tutte le sessioni —</option>
+                    {sessionsByObjective[historyObjectiveId].map((session) => (
+                      <option key={session.id} value={session.id}>
+                        {session.id.slice(0, 8)}… ({SESSION_STATUS_LABEL[session.status]})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+            {historyLoading && <p className="muted">Caricamento storico…</p>}
+            {historyError && <p className="form-error">Errore storico: {historyError}</p>}
+            {!historyLoading && historyEvents.length === 0 ? (
+              <p className="muted">Nessun evento storico trovato.</p>
+            ) : (
+              <ul className="event-list">
+                {historyEvents.map((event) => (
                   <li key={event.id}>
                     <time>{formatDate(event.timestamp)}</time>
                     <code>{event.type}</code>
