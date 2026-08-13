@@ -168,6 +168,11 @@ function ObjectiveCard({
   onDecide?: (checkpointId: string, decisionType: DecisionType, note?: string) => void;
   deciding?: string | null;
 }) {
+  const [attemptsBySession, setAttemptsBySession] = useState<Record<string, import('./api/client').ExecutionAttempt[]>>({});
+  useEffect(() => {
+    void Promise.all(sessions.map(async (session) => [session.id, (await api.listExecutionAttempts(session.id)).attempts] as const))
+      .then((entries) => setAttemptsBySession(Object.fromEntries(entries))).catch(() => undefined);
+  }, [sessions]);
   const [reason, setReason] = useState('');
   const [blockReason, setBlockReason] = useState('');
   const [failDetail, setFailDetail] = useState('');
@@ -230,6 +235,7 @@ function ObjectiveCard({
               </div>
               {session.processReference && <code className="muted small session-ref">{session.processReference}</code>}
               {session.exitReason && <p className="muted small session-exit">{session.exitReason}</p>}
+              {(attemptsBySession[session.id] ?? []).map((attempt) => <p className="muted small" key={attempt.id}>Tentativo #{attempt.attemptIndex}: <strong>{attempt.status}</strong> · {attempt.runtimeName ?? 'runtime'} / {attempt.providerName ?? 'provider'}{attempt.modelName ? ` (${attempt.modelName})` : ''}{attempt.durationMs !== null ? ` · ${attempt.durationMs}ms` : ''}{attempt.exitCode !== null ? ` · exit ${attempt.exitCode}` : ''}{attempt.reason ? ` — ${attempt.reason}` : ''}</p>)}
               {startable && (
                 <button type="button" className="btn touch-target" disabled={busy}
                   onClick={() => onStart(objective.id, session.id)}>

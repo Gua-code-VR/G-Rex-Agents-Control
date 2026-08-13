@@ -21,6 +21,9 @@ export interface AppConfig {
   codexCommand: string;
   codexEnabled: boolean;
   codexModel: string | null;
+  executionRetryMax: number;
+  executionRetryBackoffMs: number;
+  executionFallbackRuntime: string | null;
   // M7: autenticazione e accesso remoto
   /** Giorni di durata sessione (default 30). */
   sessionTtlDays: number;
@@ -52,6 +55,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const codexCommand = env.GAC_CODEX_COMMAND?.trim() || 'codex';
   const codexEnabled = env.GAC_CODEX_ENABLED !== 'false';
   const codexModel = env.GAC_CODEX_MODEL?.trim() || null;
+  const executionRetryMax = boundedInt(env.GAC_EXECUTION_RETRY_MAX, 1, 0, 5);
+  const executionRetryBackoffMs = positiveMs(env.GAC_EXECUTION_RETRY_BACKOFF_MS, 1_000);
+  const executionFallbackRuntime = env.GAC_EXECUTION_FALLBACK_RUNTIME?.trim() || null;
 
   // M7: sessione e rete
   const rawTtl = Number(env.GAC_SESSION_TTL_DAYS ?? 30);
@@ -72,6 +78,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     codexCommand,
     codexEnabled,
     codexModel,
+    executionRetryMax,
+    executionRetryBackoffMs,
+    executionFallbackRuntime,
     sessionTtlDays,
     bindAll,
     heartbeatIntervalMs,
@@ -82,4 +91,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 function positiveMs(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 1_000 && parsed <= 86_400_000 ? Math.trunc(parsed) : fallback;
+}
+
+function boundedInt(value: string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }

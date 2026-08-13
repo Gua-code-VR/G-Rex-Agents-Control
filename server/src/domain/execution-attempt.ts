@@ -17,6 +17,7 @@ export interface ExecutionAttempt {
   exitCode: number | null;
   reason: string | null;
   errorClass: string | null;
+  fallbackOfAttemptId: string | null;
   metadata: unknown | null;
 }
 
@@ -28,6 +29,7 @@ export interface CreateExecutionAttemptInput {
   modelName?: string | null;
   processReference?: string | null;
   metadata?: unknown | null;
+  fallbackOfAttemptId?: string | null;
 }
 
 export interface UpdateExecutionAttemptInput {

@@ -110,7 +110,7 @@ export interface SessionRepository {
   /** M8: Lista tutte le sessioni (per recovery all'avvio). */
   listAll(): AgentSession[];
   setStatus(id: string, status: SessionStatus): AgentSession | null;
-  setProcessReference(id: string, processReference: string): AgentSession | null;
+  setProcessReference(id: string, processReference: string, agentType?: string): AgentSession | null;
   touchActivity(id: string): AgentSession | null;
   /** M8: Aggiorna l'ultimo heartbeat della sessione. */
   touchHeartbeat(id: string): AgentSession | null;
@@ -353,10 +353,10 @@ export class SqliteSessionRepository implements SessionRepository {
     return this.getById(id);
   }
 
-  setProcessReference(id: string, processReference: string): AgentSession | null {
+  setProcessReference(id: string, processReference: string, agentType?: string): AgentSession | null {
     const existing = this.getById(id);
     if (!existing) return null;
-    this.setRefStmt.run(processReference, existing.agentType, id);
+    this.setRefStmt.run(processReference, agentType ?? existing.agentType, id);
     return this.getById(id);
   }
 

@@ -16,7 +16,10 @@ export interface StartExecutionParams {
   objectiveText: string;
   stopCondition: string | null;
   model?: string | null;
+  onEvent?: (event: ExecutionEvent) => void;
 }
+
+export interface ExecutionEvent { type: 'progress' | 'heartbeat'; message?: string; metadata?: Record<string, unknown>; }
 
 export interface ExecutionResult {
   outcome: ExecutionOutcome;
@@ -83,7 +86,15 @@ abstract class LocalCliProvider implements ExecutionProvider {
     if (stdin !== undefined) { child.stdin?.write(stdin); child.stdin?.end(); }
     const output: string[] = [];
     child.stdout?.setEncoding('utf8'); child.stderr?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk: string) => output.push(chunk));
+    child.stdout?.on('data', (chunk: string) => {
+      output.push(chunk);
+      for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
+        let metadata: Record<string, unknown> = { line: line.slice(0, 2000) };
+        try { metadata = JSON.parse(line) as Record<string, unknown>; } catch { /* raw provider output */ }
+        params.onEvent?.({ type: 'progress', message: typeof metadata.message === 'string' ? metadata.message : undefined, metadata });
+        params.onEvent?.({ type: 'heartbeat', metadata: { source: 'stdout' } });
+      }
+    });
     child.stderr?.on('data', (chunk: string) => output.push(chunk));
     const completion = new Promise<ExecutionResult>((resolve) => {
       child.once('error', (error) => resolve({ outcome: 'FAILED', exitCode: null, reason: error.message, errorClass: 'AGENT_ERROR' }));
@@ -94,7 +105,7 @@ abstract class LocalCliProvider implements ExecutionProvider {
           outcome: cancelled ? 'CANCELLED' : code === 0 ? 'COMPLETED' : 'FAILED',
           exitCode: code,
           reason: cancelled ? `Processo terminato (${signal})` : code === 0 ? null : output.join('').slice(-4000) || `Exit code ${code}`,
-          errorClass: code === 0 ? null : 'AGENT_ERROR',
+          errorClass: code === 0 ? null : /econn|timeout|network/i.test(output.join('')) ? 'CONNECTIVITY_ERROR' : 'AGENT_ERROR',
           metadata: { signal, output: output.join('').slice(-4000) },
         });
       });

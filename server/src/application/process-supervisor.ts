@@ -12,11 +12,18 @@ export const EVENT_EXECUTION_ATTEMPT_STARTED = 'execution.attempt.started';
 export const EVENT_EXECUTION_ATTEMPT_COMPLETED = 'execution.attempt.completed';
 export const EVENT_EXECUTION_ATTEMPT_FAILED = 'execution.attempt.failed';
 export const EVENT_EXECUTION_ATTEMPT_CANCELLED = 'execution.attempt.cancelled';
+export const EVENT_EXECUTION_ATTEMPT_PROGRESS = 'execution.attempt.progress';
+export const EVENT_EXECUTION_ATTEMPT_HEARTBEAT = 'execution.attempt.heartbeat';
+export const EVENT_EXECUTION_ATTEMPT_FALLBACK = 'execution.attempt.fallback';
+
+export interface ExecutionPolicy { retryMax: number; retryBackoffMs: number; fallbackRuntime: string | null; }
+export interface RetryPlan { runtime: string; delayMs: number; fallbackOfAttemptId: string | null; }
 
 export class ProcessSupervisor {
   constructor(
     private readonly attempts: ExecutionAttemptRepository,
     private readonly events: EventService,
+    private readonly policy: ExecutionPolicy = { retryMax: 0, retryBackoffMs: 1_000, fallbackRuntime: null },
   ) {}
 
   private nextAttemptIndex(sessionId: string): number {
@@ -58,6 +65,26 @@ export class ProcessSupervisor {
       },
     });
     return attempt;
+  }
+
+  recordProgress(attempt: ExecutionAttempt, type: 'progress' | 'heartbeat', payload: Record<string, unknown>): void {
+    this.events.log(type === 'heartbeat' ? EVENT_EXECUTION_ATTEMPT_HEARTBEAT : EVENT_EXECUTION_ATTEMPT_PROGRESS, {
+      category: 'AGENT', objectiveId: null, sessionId: attempt.sessionId,
+      payload: { attemptId: attempt.id, ...payload },
+    });
+  }
+
+  /** Decides the next attempt without mutating session/objective state. */
+  retryPlan(sessionId: string, currentRuntime: string, failedAttempt: ExecutionAttempt): RetryPlan | null {
+    if (!['CONNECTIVITY_ERROR', 'AGENT_CONTROL_ERROR'].includes(failedAttempt.errorClass ?? '')) return null;
+    const attempts = this.attempts.listBySession(sessionId);
+    const retryCount = attempts.filter((attempt) => attempt.runtimeName === failedAttempt.runtimeName).length - 1;
+    if (retryCount < this.policy.retryMax) return { runtime: currentRuntime, delayMs: this.policy.retryBackoffMs * (retryCount + 1), fallbackOfAttemptId: null };
+    if (this.policy.fallbackRuntime && this.policy.fallbackRuntime !== currentRuntime) {
+      this.events.log(EVENT_EXECUTION_ATTEMPT_FALLBACK, { category: 'TECHNICAL', sessionId, payload: { fromAttemptId: failedAttempt.id, fromRuntime: currentRuntime, toRuntime: this.policy.fallbackRuntime } });
+      return { runtime: this.policy.fallbackRuntime, delayMs: this.policy.retryBackoffMs, fallbackOfAttemptId: failedAttempt.id };
+    }
+    return null;
   }
 
   async finalizeLatestAttempt(sessionId: string, input: UpdateExecutionAttemptInput): Promise<ExecutionAttempt> {

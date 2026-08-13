@@ -172,6 +172,9 @@ d'ambiente opzionali:
 | `GAC_CODEX_COMMAND` | `codex` | Comando della Codex CLI sul PATH |
 | `GAC_CODEX_ENABLED` | `true` | Abilita il runtime Codex CLI |
 | `GAC_CODEX_MODEL` | — | Modello Codex facoltativo da passare alla CLI |
+| `GAC_EXECUTION_RETRY_MAX` | `1` | Retry massimi per errori transienti per runtime |
+| `GAC_EXECUTION_RETRY_BACKOFF_MS` | `1000` | Backoff lineare tra retry e fallback |
+| `GAC_EXECUTION_FALLBACK_RUNTIME` | — | Runtime alternativo dopo l’esaurimento dei retry |
 | `GAC_HEARTBEAT_INTERVAL_MS` | `30000` | Intervallo massimo senza heartbeat prima di dichiarare una sessione stale |
 | `GAC_STALE_CHECK_INTERVAL_MS` | `30000` | Frequenza del controllo automatico delle sessioni stale |
 
@@ -200,6 +203,17 @@ medesimo contratto: il Control Plane non contiene ramificazioni specifiche.
 
 Codex usa la CLI non interattiva (`codex exec --json`) in sandbox
 `workspace-write` con approvazioni automatiche, senza bypass di sandbox.
+
+### M10 — osservabilità del lifecycle
+
+Gli adapter normalizzano le righe di output in eventi di progresso e heartbeat;
+il Control Plane registra `execution.attempt.progress` e
+`execution.attempt.heartbeat`. Gli attempt sono consultabili con
+`GET /api/sessions/:id/execution-attempts` e nel dettaglio della sessione.
+Gli errori di connettività/controllo generano retry con backoff; al loro
+esaurimento il supervisor può avviare il runtime di fallback, collegandolo al
+tentativo originario tramite `fallbackOfAttemptId` senza cambiare il lifecycle
+business della sessione.
 
 ## Struttura
 

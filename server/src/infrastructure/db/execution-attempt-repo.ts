@@ -23,6 +23,7 @@ interface ExecutionAttemptRow {
   exit_code: number | null;
   reason: string | null;
   error_class: string | null;
+  fallback_of_attempt_id: string | null;
   metadata: string | null;
 }
 
@@ -52,6 +53,7 @@ function toExecutionAttempt(row: ExecutionAttemptRow): ExecutionAttempt {
     exitCode: row.exit_code,
     reason: row.reason,
     errorClass: row.error_class,
+    fallbackOfAttemptId: row.fallback_of_attempt_id,
     metadata: parseMetadata(row.metadata),
   };
 }
@@ -74,11 +76,11 @@ export class SqliteExecutionAttemptRepository implements ExecutionAttemptReposit
       `INSERT INTO execution_attempts
          (id, session_id, attempt_index, runtime_type, runtime_name, provider_name, model_name,
           process_reference, status, started_at, ended_at, duration_ms, exit_code, reason,
-          error_class, metadata)
+          error_class, fallback_of_attempt_id, metadata)
        VALUES
          (:id, :sessionId, :attemptIndex, :runtimeType, :runtimeName, :providerName, :modelName,
           :processReference, :status, :startedAt, :endedAt, :durationMs, :exitCode, :reason,
-          :errorClass, :metadata)`,
+          :errorClass, :fallbackOfAttemptId, :metadata)`,
     );
     this.getStmt = db.prepare('SELECT * FROM execution_attempts WHERE id = ?');
     this.listBySessionStmt = db.prepare(
@@ -124,6 +126,7 @@ export class SqliteExecutionAttemptRepository implements ExecutionAttemptReposit
       exitCode: null,
       reason: null,
       errorClass: null,
+      fallbackOfAttemptId: input.fallbackOfAttemptId ?? null,
       metadata,
     });
     return this.getById(id)!;

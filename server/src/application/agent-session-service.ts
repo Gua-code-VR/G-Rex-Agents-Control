@@ -95,11 +95,17 @@ export class AgentSessionService {
     try { provider = this.providers.require(session.agentType); } catch (error) {
       throw new SessionStateError(error instanceof Error ? error.message : 'Runtime non disponibile');
     }
+    let executionAttempt: import('../domain/execution-attempt.js').ExecutionAttempt | null = null;
     const handle = await provider.start({
       objectiveId: objective.id,
       projectPath: project?.repositoryPath ?? null,
       objectiveText: objective.objectiveText,
       stopCondition: objective.stopCondition,
+      onEvent: (event) => {
+        if (!executionAttempt) return;
+        this.supervisor.recordProgress(executionAttempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });
+        if (event.type === 'heartbeat') { this.sessions.touchHeartbeat(sessionId); this.sessions.touchActivity(sessionId); }
+      },
     });
 
     this.sessions.setProcessReference(sessionId, handle.processReference);
@@ -115,6 +121,7 @@ export class AgentSessionService {
       processReference: handle.processReference,
       metadata: { source: 'agent-session.start', runtimeId: handle.descriptor.id },
     });
+    executionAttempt = attempt;
 
     this.objectives.markActive(objectiveId, 'IN_LAVORAZIONE', new Date().toISOString());
     this.projects.setStatus(objective.projectId, { status: 'IN_LAVORAZIONE' });
@@ -389,10 +396,38 @@ export class AgentSessionService {
       return;
     }
     if (result.outcome === 'FAILED') {
+      const failed = await this.supervisor.finalizeLatestAttempt(sessionId, {
+        endedAt: new Date().toISOString(), status: 'FAILED', exitCode: result.exitCode,
+        reason: result.reason, errorClass: result.errorClass ?? 'AGENT_ERROR', metadata: result.metadata ?? null,
+      });
+      const plan = this.supervisor.retryPlan(sessionId, session.agentType, failed);
+      if (plan) {
+        await new Promise((resolve) => setTimeout(resolve, plan.delayMs));
+        if (this.sessions.getById(sessionId)?.status !== 'ATTIVA') return;
+        await this.startRetryAttempt(objectiveId, sessionId, plan.runtime, plan.fallbackOfAttemptId);
+        return;
+      }
       await this.fail(objectiveId, { error: result.reason ?? `Errore del runtime ${session.agentType}` }, result);
       return;
     }
     await this.stop(objectiveId, sessionId, { reason: result.reason ?? `Runtime ${session.agentType} interrotto` });
+  }
+
+  private async startRetryAttempt(objectiveId: string, sessionId: string, runtime: string, fallbackOfAttemptId: string | null): Promise<void> {
+    const objective = this.objectives.getById(objectiveId)!;
+    const project = this.projects.getById(objective.projectId);
+    const provider = this.providers.require(runtime);
+    let attempt: import('../domain/execution-attempt.js').ExecutionAttempt | null = null;
+    const handle = await provider.start({ objectiveId, projectPath: project?.repositoryPath ?? null, objectiveText: objective.objectiveText, stopCondition: objective.stopCondition,
+      onEvent: (event) => { if (attempt) this.supervisor.recordProgress(attempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null }); },
+    });
+    this.sessions.setProcessReference(sessionId, handle.processReference, runtime);
+    attempt = await this.supervisor.startAttempt(this.sessions.getById(sessionId)!, {
+      runtimeType: handle.descriptor.runtimeType, runtimeName: handle.descriptor.runtimeName, providerName: handle.descriptor.providerName,
+      modelName: handle.descriptor.defaultModel, processReference: handle.processReference, fallbackOfAttemptId,
+      metadata: { source: 'process-supervisor.retry', runtimeId: runtime, backoffApplied: true },
+    });
+    void handle.completion.then((result) => this.applyRuntimeResult(objectiveId, sessionId, result)).catch(() => undefined);
   }
 
   private transition(

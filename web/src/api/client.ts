@@ -203,6 +203,7 @@ export interface CreateObjectiveInput {
 }
 
 export interface ExecutionProvider { id: string; runtimeName: string; providerName: string; configured: boolean; }
+export interface ExecutionAttempt { id: string; attemptIndex: number; runtimeName: string | null; providerName: string | null; modelName: string | null; status: string; startedAt: string; endedAt: string | null; durationMs: number | null; exitCode: number | null; reason: string | null; errorClass: string | null; metadata: unknown; }
 
 /** Risposta delle API di transizione sessione/obiettivo (M3/M4). */
 export interface ObjectiveTransition {
@@ -295,6 +296,7 @@ export const api = {
       body: JSON.stringify(input),
     }),
   listExecutionProviders: () => request<{ providers: ExecutionProvider[] }>('/api/execution-providers'),
+  listExecutionAttempts: (sessionId: string) => request<{ attempts: ExecutionAttempt[] }>(`/api/sessions/${sessionId}/execution-attempts`),
   getObjective: (id: string) => request<ObjectiveDetail>(`/api/objectives/${id}`),
   startSession: (objectiveId: string, sessionId: string) =>
     request<ObjectiveTransition>(`/api/objectives/${objectiveId}/sessions/${sessionId}/start`, {
