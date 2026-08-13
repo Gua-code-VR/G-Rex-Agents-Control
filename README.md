@@ -199,6 +199,17 @@ l’eccezione è revocabile. Il pannello include richieste pendenti, eccezioni a
 portafoglio multi-progetto. API: `GET /api/governance/portfolio`,
 `GET /api/governance/approvals`, `POST /api/governance/approvals/:id/decide`,
 `GET /api/objectives/:id/governance/exceptions`, `POST /api/governance/exceptions/:id/revoke`.
+
+### M14 — catalogo provider/modello e stima pre-avvio
+
+Gli adapter pubblicano un catalogo normalizzato con runtime, provider, modello,
+capacità, disponibilità, versione, limiti e pricing. Il Control Plane calcola
+una stima deterministica dai token di input/output e dal pricing configurato,
+oppure dichiara esplicitamente la stima non disponibile: non inventa costi.
+Il pannello consente di consultare il catalogo e calcolare la stima prima di
+creare l’obiettivo. API: `GET /api/provider-catalog` e
+`POST /api/provider-catalog/estimate`. Per Codex, configurare facoltativamente
+`GAC_CODEX_INPUT_PRICE_PER_MILLION` e `GAC_CODEX_OUTPUT_PRICE_PER_MILLION`.
 | `GAC_HEARTBEAT_INTERVAL_MS` | `30000` | Intervallo massimo senza heartbeat prima di dichiarare una sessione stale |
 | `GAC_STALE_CHECK_INTERVAL_MS` | `30000` | Frequenza del controllo automatico delle sessioni stale |
 

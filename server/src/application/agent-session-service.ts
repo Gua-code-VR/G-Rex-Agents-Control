@@ -16,6 +16,7 @@ import type { CheckpointService } from './checkpoint-service.js';
 import type { NotificationService } from './notification-service.js';
 import { classifyError } from './error-classifier.js';
 import type { GovernanceService } from './governance-service.js';
+import type { ProviderCatalogService } from './provider-catalog-service.js';
 
 export const EVENT_SESSION_STARTED = 'session.started';
 export const EVENT_SESSION_STOPPED = 'session.stopped';
@@ -75,6 +76,7 @@ export class AgentSessionService {
     private readonly supervisor: ProcessSupervisor,
     private readonly notifications?: NotificationService,
     private readonly governance?: GovernanceService,
+    private readonly catalog?: ProviderCatalogService,
   ) {}
 
   /** Avvia la sessione (IN_AVVIO → ATTIVA) e porta obiettivo e progetto IN_LAVORAZIONE. */
@@ -92,7 +94,8 @@ export class AgentSessionService {
       throw new SessionStateError("L'obiettivo non è in attesa di avvio");
     }
 
-    const preflight = this.governance?.preflight(objectiveId, objective.estimatedCost);
+    const catalogEstimate = objective.estimatedCost === null && this.catalog ? this.catalog.estimate(session.agentType, objective.objectiveText, objective.stopCondition) : null;
+    const preflight = this.governance?.preflight(objectiveId, objective.estimatedCost ?? catalogEstimate?.cost ?? null);
     if (preflight?.decision === 'HARD_STOP') throw new SessionStateError('Budget preventivo superato dalla stima dell’obiettivo');
     if (preflight?.decision === 'REQUIRE_APPROVAL') throw new SessionStateError(`Approvazione budget richiesta (${preflight.approval?.id ?? 'in attesa'})`);
 

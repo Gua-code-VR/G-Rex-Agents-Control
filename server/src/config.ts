@@ -21,6 +21,8 @@ export interface AppConfig {
   codexCommand: string;
   codexEnabled: boolean;
   codexModel: string | null;
+  codexInputPricePerMillion: number | null;
+  codexOutputPricePerMillion: number | null;
   executionRetryMax: number;
   executionRetryBackoffMs: number;
   executionFallbackRuntime: string | null;
@@ -56,6 +58,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const codexCommand = env.GAC_CODEX_COMMAND?.trim() || 'codex';
   const codexEnabled = env.GAC_CODEX_ENABLED !== 'false';
   const codexModel = env.GAC_CODEX_MODEL?.trim() || null;
+  const codexInputPricePerMillion = nonNegativeNumber(env.GAC_CODEX_INPUT_PRICE_PER_MILLION);
+  const codexOutputPricePerMillion = nonNegativeNumber(env.GAC_CODEX_OUTPUT_PRICE_PER_MILLION);
   const executionRetryMax = boundedInt(env.GAC_EXECUTION_RETRY_MAX, 1, 0, 5);
   const executionRetryBackoffMs = positiveMs(env.GAC_EXECUTION_RETRY_BACKOFF_MS, 1_000);
   const executionFallbackRuntime = env.GAC_EXECUTION_FALLBACK_RUNTIME?.trim() || null;
@@ -80,6 +84,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     codexCommand,
     codexEnabled,
     codexModel,
+    codexInputPricePerMillion,
+    codexOutputPricePerMillion,
     executionRetryMax,
     executionRetryBackoffMs,
     executionFallbackRuntime,

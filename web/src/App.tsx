@@ -17,6 +17,7 @@ import {
   type Notification,
   type ExecutionProvider,
   type GovernanceDashboard,
+  type ProviderCatalogEntry,
 } from './api/client';
 import { CheckpointList } from './components/CheckpointList';
 import { LoginPage } from './components/LoginPage';
@@ -132,6 +133,12 @@ function PortfolioGovernance() {
   const load = useCallback(() => { void api.getGovernancePortfolio().then((r) => setItems(r.projects)).catch(() => undefined); }, []);
   useEffect(load, [load]);
   return <section className="card"><div className="git-box-head"><h2>Portafoglio budget</h2><button className="btn btn-ghost" onClick={load}>Aggiorna</button></div>{items.length === 0 ? <p className="muted">Nessun consumo registrato.</p> : <ul className="git-line">{items.map(({ project, governance }) => <li key={project.id}><strong>{project.name}</strong>: € {governance.budget.used.toFixed(4)} / {governance.policy.costBudget === null ? 'illimitato' : `€ ${governance.policy.costBudget.toFixed(4)}`} {governance.budget.remaining !== null && governance.budget.remaining <= 0 ? '— a rischio' : ''}</li>)}</ul>}</section>;
+}
+
+function ProviderCatalog() {
+  const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
+  useEffect(() => { void api.getProviderCatalog().then((result) => setCatalog(result.catalog)).catch(() => undefined); }, []);
+  return <section className="card"><h2>Catalogo runtime, provider e modelli</h2>{catalog.map((entry) => <p key={entry.runtime.id} className="muted small"><strong>{entry.runtime.name}</strong> ({entry.runtime.available ? 'disponibile' : 'non disponibile'}) · provider {entry.provider.name} · {entry.models.length ? entry.models.map((model) => `${model.name}: ${model.pricing.inputPerMillion === null ? 'pricing non configurato' : `$${model.pricing.inputPerMillion}/M input, $${model.pricing.outputPerMillion}/M output`}`).join(' · ') : 'modello gestito dal runtime'}</p>)}</section>;
 }
 
 // ── ProjectCard ───────────────────────────────────────────────────────
@@ -364,6 +371,7 @@ function ObjectivesSection({
   const [stopCondition, setStopCondition] = useState('');
   const [runtime, setRuntime] = useState('');
   const [estimatedCost, setEstimatedCost] = useState('');
+  const [catalogEstimate, setCatalogEstimate] = useState<import('./api/client').PreflightEstimate | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const selected = projects.find((p) => p.id === selectedProjectId) ?? null;
   const objectives = selected ? objectivesByProject[selected.id] ?? [] : [];
@@ -399,6 +407,8 @@ function ObjectivesSection({
           <label className="field">Obiettivo * <textarea value={objectiveText} onChange={(e) => setObjectiveText(e.target.value)} rows={3} maxLength={5000} placeholder="Descrizione dettagliata" disabled={creating} /></label>
           <label className="field">Runtime <select value={runtime} onChange={(e) => setRuntime(e.target.value)} disabled={creating}><option value="">Predefinito</option>{providers.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.runtimeName}{provider.configured ? '' : ' (non disponibile)'}</option>)}</select></label>
           <label className="field">Stima costo affidabile (€) <input type="number" min="0" step="0.001" value={estimatedCost} onChange={(e) => setEstimatedCost(e.target.value)} placeholder="Opzionale: abilita enforcement preventivo" disabled={creating} /></label>
+          <button type="button" className="btn btn-ghost" disabled={!runtime || !objectiveText.trim()} onClick={() => void api.estimateProviderCost(runtime, objectiveText, stopCondition || null).then((result) => { setCatalogEstimate(result.estimate); if (result.estimate.cost !== null) setEstimatedCost(String(result.estimate.cost)); })}>Calcola stima catalogo</button>
+          {catalogEstimate && <p className="muted small">{catalogEstimate.reason}: {catalogEstimate.cost === null ? 'costo non disponibile' : `€ ${catalogEstimate.cost.toFixed(6)}`} · {catalogEstimate.inputTokens}+{catalogEstimate.outputTokens} token · {catalogEstimate.modelId ?? 'modello runtime'}</p>}
           <label className="field">Invarianti <textarea value={invariants} onChange={(e) => setInvariants(e.target.value)} rows={2} maxLength={5000} placeholder="Invarianti (uno per riga)" disabled={creating} /></label>
           <label className="field">Criteri di accettazione <textarea value={acceptanceCriteria} onChange={(e) => setAcceptanceCriteria(e.target.value)} rows={2} maxLength={5000} placeholder="Criteri (uno per riga)" disabled={creating} /></label>
           <label className="field">Condizione di stop <input value={stopCondition} onChange={(e) => setStopCondition(e.target.value)} placeholder="Condizione di stop" maxLength={2000} disabled={creating} /></label>
@@ -655,6 +665,7 @@ export default function App() {
           {/* PROJECTS TAB */}
           {activeTab === 'projects' && (<div className="tab-content">
             <PortfolioGovernance />
+            <ProviderCatalog />
             <section className="card">
               <h2>Nuovo progetto</h2>
               <form onSubmit={handleSubmit} className="create-project-form">

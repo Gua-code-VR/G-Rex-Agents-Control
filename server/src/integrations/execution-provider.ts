@@ -9,6 +9,7 @@ export interface ExecutionProviderDescriptor {
   providerName: string;
   defaultModel: string | null;
 }
+export interface ProviderCatalogEntry { runtime: { id: string; name: string; type: string; available: boolean; defaultModel: string | null; capabilities: string[]; version: string | null }; provider: { id: string; name: string }; models: Array<{ id: string; name: string; version: string | null; capabilities: string[]; limits: { contextTokens: number | null; defaultOutputTokens: number }; pricing: { inputPerMillion: number | null; outputPerMillion: number | null; currency: 'USD' } }> }
 
 export interface StartExecutionParams {
   objectiveId: string;
@@ -44,6 +45,7 @@ export interface ExecutionProvider {
   start(params: StartExecutionParams): Promise<ExecutionHandle>;
   stop(processReference: string, reason?: string): Promise<void>;
   touchHeartbeat(processReference: string): Promise<void>;
+  catalog(): ProviderCatalogEntry;
 }
 
 export class ExecutionProviderRegistry {
@@ -63,6 +65,7 @@ export class ExecutionProviderRegistry {
   list(): Array<ExecutionProviderDescriptor & { configured: boolean }> {
     return [...this.providers.values()].map((provider) => ({ ...provider.descriptor, configured: provider.isConfigured() }));
   }
+  catalog(): ProviderCatalogEntry[] { return [...this.providers.values()].map((provider) => provider.catalog()); }
 }
 
 abstract class LocalCliProvider implements ExecutionProvider {
@@ -121,6 +124,7 @@ abstract class LocalCliProvider implements ExecutionProvider {
     if (child && !child.killed) child.kill();
   }
   async touchHeartbeat(_processReference: string): Promise<void> { /* activity is persisted by the Control Plane */ }
+  abstract catalog(): ProviderCatalogEntry;
 }
 
 function normalizedUsage(output: string): ExecutionUsage | undefined {
@@ -144,12 +148,13 @@ export class ClineProvider extends LocalCliProvider {
   async start(params: StartExecutionParams): Promise<ExecutionHandle> {
     return this.launch(['--headless', '--json'], params, JSON.stringify({ objectiveText: params.objectiveText, stopCondition: params.stopCondition ?? null }));
   }
+  catalog(): ProviderCatalogEntry { return { runtime: { id: 'cline', name: 'Cline', type: 'cli', available: this.isConfigured(), defaultModel: null, capabilities: ['workspace-edit', 'streaming'], version: null }, provider: { id: 'cline', name: 'Cline' }, models: [] }; }
 }
 
 /** Codex CLI 0.147 protocol: `codex exec --json [--model] --cd <dir> <prompt>`. */
 export class CodexProvider extends LocalCliProvider {
   readonly descriptor = { id: 'codex', runtimeType: 'cli', runtimeName: 'Codex CLI', providerName: 'OpenAI Codex', defaultModel: null };
-  constructor(command = 'codex', enabled = true, private readonly defaultModel: string | null = null) { super(command, enabled); }
+  constructor(command = 'codex', enabled = true, private readonly defaultModel: string | null = null, private readonly pricing: { inputPerMillion: number | null; outputPerMillion: number | null } = { inputPerMillion: null, outputPerMillion: null }) { super(command, enabled); }
   async start(params: StartExecutionParams): Promise<ExecutionHandle> {
     const prompt = [params.objectiveText, params.stopCondition ? `Condizione di stop: ${params.stopCondition}` : null].filter(Boolean).join('\n\n');
     const args = ['exec', '--json', '--color', 'never', '--sandbox', 'workspace-write', '--approve-for-me'];
@@ -157,6 +162,7 @@ export class CodexProvider extends LocalCliProvider {
     if (model) args.push('--model', model);
     return this.launch([...args, prompt], params);
   }
+  catalog(): ProviderCatalogEntry { const id = this.defaultModel ?? 'codex-default'; return { runtime: { id: 'codex', name: 'Codex CLI', type: 'cli', available: this.isConfigured(), defaultModel: id, capabilities: ['workspace-edit', 'streaming', 'json-output'], version: '0.147-compatible' }, provider: { id: 'openai-codex', name: 'OpenAI Codex' }, models: [{ id, name: this.defaultModel ?? 'Modello Codex predefinito', version: null, capabilities: ['code', 'tool-use'], limits: { contextTokens: null, defaultOutputTokens: 4000 }, pricing: { ...this.pricing, currency: 'USD' } }] }; }
 }
 
 export class FakeProvider implements ExecutionProvider {
@@ -167,4 +173,5 @@ export class FakeProvider implements ExecutionProvider {
   }
   async stop(_processReference: string): Promise<void> {}
   async touchHeartbeat(_processReference: string): Promise<void> {}
+  catalog(): ProviderCatalogEntry { return { runtime: { id: 'fake', name: 'Fake', type: 'fake', available: true, defaultModel: 'fake', capabilities: ['test'] , version: '1' }, provider: { id: 'fake', name: 'Fake' }, models: [{ id: 'fake', name: 'Fake', version: '1', capabilities: ['test'], limits: { contextTokens: null, defaultOutputTokens: 0 }, pricing: { inputPerMillion: 0, outputPerMillion: 0, currency: 'USD' } }] }; }
 }

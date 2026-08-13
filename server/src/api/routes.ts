@@ -29,6 +29,7 @@ import type { ExecutionProviderRegistry } from '../integrations/execution-provid
 import type { ExecutionAttemptRepository } from '../infrastructure/db/execution-attempt-repo.js';
 import type { ProcessSupervisor } from '../application/process-supervisor.js';
 import type { GovernanceService } from '../application/governance-service.js';
+import type { ProviderCatalogService } from '../application/provider-catalog-service.js';
 
 export interface ApiDeps {
   projects: ProjectService;
@@ -45,12 +46,20 @@ export interface ApiDeps {
   attempts: ExecutionAttemptRepository;
   supervisor: ProcessSupervisor;
   governance: GovernanceService;
+  catalog: ProviderCatalogService;
 }
 
 /** API REST di M4 (Web App/API, §7): registro progetti, obiettivi, sessioni
  *  agente e checkpoint (§5/§6/§12-M4). */
 export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.get('/api/execution-providers', async () => ({ providers: deps.providers.list() }));
+  app.get('/api/provider-catalog', async () => ({ catalog: deps.catalog.list() }));
+  app.post('/api/provider-catalog/estimate', async (req, reply) => {
+    const body = req.body as { runtimeId?: string; objectiveText?: string; stopCondition?: string | null } | undefined;
+    if (!body?.runtimeId || !body.objectiveText) return reply.code(400).send({ message: 'Runtime e obiettivo sono obbligatori' });
+    try { return { estimate: deps.catalog.estimate(body.runtimeId, body.objectiveText, body.stopCondition ?? null) }; }
+    catch (error) { return reply.code(400).send({ message: error instanceof Error ? error.message : 'Stima non disponibile' }); }
+  });
   app.get('/api/sessions/:id/execution-attempts', async (req) => ({ attempts: deps.attempts.listBySession((req.params as { id: string }).id) }));
   app.get('/api/sessions/:id/execution-metrics', async (req) => ({ metrics: deps.supervisor.totals((req.params as { id: string }).id) }));
   app.get('/api/health', async () => ({

@@ -211,6 +211,8 @@ export interface CreateObjectiveInput {
 }
 
 export interface ExecutionProvider { id: string; runtimeName: string; providerName: string; configured: boolean; }
+export interface ProviderCatalogEntry { runtime: { id: string; name: string; type: string; available: boolean; defaultModel: string | null; capabilities: string[]; version: string | null }; provider: { id: string; name: string }; models: Array<{ id: string; name: string; version: string | null; capabilities: string[]; limits: { contextTokens: number | null; defaultOutputTokens: number }; pricing: { inputPerMillion: number | null; outputPerMillion: number | null; currency: string } }> }
+export interface PreflightEstimate { runtimeId: string; providerId: string; modelId: string | null; available: boolean; inputTokens: number; outputTokens: number; totalTokens: number; cost: number | null; confidence: string; reason: string }
 export interface ExecutionAttempt { id: string; attemptIndex: number; runtimeName: string | null; providerName: string | null; modelName: string | null; status: string; startedAt: string; endedAt: string | null; durationMs: number | null; exitCode: number | null; reason: string | null; errorClass: string | null; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; costEstimate: number | null; costActual: number | null; metadata: unknown; }
 
 /** Risposta delle API di transizione sessione/obiettivo (M3/M4). */
@@ -313,6 +315,8 @@ export const api = {
       body: JSON.stringify(input),
     }),
   listExecutionProviders: () => request<{ providers: ExecutionProvider[] }>('/api/execution-providers'),
+  getProviderCatalog: () => request<{ catalog: ProviderCatalogEntry[] }>('/api/provider-catalog'),
+  estimateProviderCost: (runtimeId: string, objectiveText: string, stopCondition?: string | null) => request<{ estimate: PreflightEstimate }>('/api/provider-catalog/estimate', { method: 'POST', body: JSON.stringify({ runtimeId, objectiveText, stopCondition }) }),
   listExecutionAttempts: (sessionId: string) => request<{ attempts: ExecutionAttempt[] }>(`/api/sessions/${sessionId}/execution-attempts`),
   getObjective: (id: string) => request<ObjectiveDetail>(`/api/objectives/${id}`),
   startSession: (objectiveId: string, sessionId: string) =>

@@ -29,6 +29,7 @@ import { SqliteNotificationRepository } from './infrastructure/db/notification-r
 import { BackupService } from './application/backup-service.js';
 import { StaleSessionDetector, StartupRecoveryService } from './application/stale-detector.js';
 import { GovernanceService } from './application/governance-service.js';
+import { ProviderCatalogService } from './application/provider-catalog-service.js';
 
 export interface AppServices {
   db: DatabaseSync;
@@ -45,6 +46,7 @@ export interface AppServices {
   staleDetector: StaleSessionDetector;
   startupRecovery: StartupRecoveryService;
   governance: GovernanceService;
+  catalog: ProviderCatalogService;
 }
 
 export interface BuiltApp {
@@ -57,7 +59,7 @@ export function buildProviderRegistry(config: AppConfig): ExecutionProviderRegis
   return new ExecutionProviderRegistry([
     new FakeProvider(),
     new ClineProvider(config.clineCommand, config.clineEnabled),
-    new CodexProvider(config.codexCommand, config.codexEnabled, config.codexModel),
+    new CodexProvider(config.codexCommand, config.codexEnabled, config.codexModel, { inputPerMillion: config.codexInputPricePerMillion, outputPerMillion: config.codexOutputPricePerMillion }),
   ]);
 }
 
@@ -89,6 +91,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     events,
   );
   const providers = buildProviderRegistry(config);
+  const catalog = new ProviderCatalogService(providers);
   const objectives = new ObjectiveService(
     objectiveRepository,
     sessionRepository,
@@ -118,6 +121,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     supervisor,
     notifications,
     governance,
+    catalog,
   );
 
   // M7: autenticazione
@@ -180,6 +184,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     attempts: attemptsRepository,
     supervisor,
     governance,
+    catalog,
   });
 
   return {
@@ -199,6 +204,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
       staleDetector,
       startupRecovery,
       governance,
+      catalog,
     },
   };
 }
