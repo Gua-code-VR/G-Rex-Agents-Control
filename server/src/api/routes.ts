@@ -25,6 +25,7 @@ import type { AppConfig } from '../config.js';
 import { EVENT_CATEGORIES, type EventCategory } from '../application/event-service.js';
 import type { NotificationService } from '../application/notification-service.js';
 import type { BackupService } from '../application/backup-service.js';
+import type { ExecutionProviderRegistry } from '../integrations/execution-provider.js';
 
 export interface ApiDeps {
   projects: ProjectService;
@@ -37,11 +38,13 @@ export interface ApiDeps {
   config: AppConfig;
   notifications: NotificationService;
   backups: BackupService;
+  providers: ExecutionProviderRegistry;
 }
 
 /** API REST di M4 (Web App/API, §7): registro progetti, obiettivi, sessioni
  *  agente e checkpoint (§5/§6/§12-M4). */
 export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
+  app.get('/api/execution-providers', async () => ({ providers: deps.providers.list() }));
   app.get('/api/health', async () => ({
     status: 'ok',
     service: 'g-rex-agent-control',

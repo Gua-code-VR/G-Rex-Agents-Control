@@ -15,6 +15,7 @@ import {
   type StatusResponse,
   type Checkpoint,
   type Notification,
+  type ExecutionProvider,
 } from './api/client';
 import { CheckpointList } from './components/CheckpointList';
 import { LoginPage } from './components/LoginPage';
@@ -291,7 +292,7 @@ function ObjectiveCard({
 function ObjectivesSection({
   projects, objectivesByProject, sessionsByObjective, checkpointsByObjective,
   selectedProjectId, onSelectProject, busy, creating, onCreate, onStart,
-  onStop, onComplete, onBlock, onFail, onCancel, onDecide, deciding,
+  onStop, onComplete, onBlock, onFail, onCancel, onDecide, deciding, providers,
 }: {
   projects: Project[]; objectivesByProject: Record<string, Objective[]>;
   sessionsByObjective: Record<string, AgentSession[]>; checkpointsByObjective: Record<string, Checkpoint[]>;
@@ -306,12 +307,14 @@ function ObjectivesSection({
   onCancel: (oId: string) => void;
   onDecide?: (cId: string, dt: DecisionType, note?: string) => void;
   deciding?: string | null;
+  providers: ExecutionProvider[];
 }) {
   const [title, setTitle] = useState('');
   const [objectiveText, setObjectiveText] = useState('');
   const [invariants, setInvariants] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [stopCondition, setStopCondition] = useState('');
+  const [runtime, setRuntime] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const selected = projects.find((p) => p.id === selectedProjectId) ?? null;
   const objectives = selected ? objectivesByProject[selected.id] ?? [] : [];
@@ -325,6 +328,7 @@ function ObjectivesSection({
       ...(invariants.trim() ? { invariants: splitLines(invariants) } : {}),
       ...(acceptanceCriteria.trim() ? { acceptanceCriteria: splitLines(acceptanceCriteria) } : {}),
       ...(stopCondition.trim() ? { stopCondition: stopCondition.trim() } : {}),
+      ...(runtime ? { runtime } : {}),
     }).then(() => { setTitle(''); setObjectiveText(''); setInvariants(''); setAcceptanceCriteria(''); setStopCondition(''); });
   };
   return (
@@ -343,6 +347,7 @@ function ObjectivesSection({
           <h3>Nuovo obiettivo per {selected.name}</h3>
           <label className="field">Titolo * <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Titolo breve" maxLength={200} disabled={creating} /></label>
           <label className="field">Obiettivo * <textarea value={objectiveText} onChange={(e) => setObjectiveText(e.target.value)} rows={3} maxLength={5000} placeholder="Descrizione dettagliata" disabled={creating} /></label>
+          <label className="field">Runtime <select value={runtime} onChange={(e) => setRuntime(e.target.value)} disabled={creating}><option value="">Predefinito</option>{providers.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.runtimeName}{provider.configured ? '' : ' (non disponibile)'}</option>)}</select></label>
           <label className="field">Invarianti <textarea value={invariants} onChange={(e) => setInvariants(e.target.value)} rows={2} maxLength={5000} placeholder="Invarianti (uno per riga)" disabled={creating} /></label>
           <label className="field">Criteri di accettazione <textarea value={acceptanceCriteria} onChange={(e) => setAcceptanceCriteria(e.target.value)} rows={2} maxLength={5000} placeholder="Criteri (uno per riga)" disabled={creating} /></label>
           <label className="field">Condizione di stop <input value={stopCondition} onChange={(e) => setStopCondition(e.target.value)} placeholder="Condizione di stop" maxLength={2000} disabled={creating} /></label>
@@ -400,6 +405,7 @@ export default function App() {
   const [creatingObjective, setCreatingObjective] = useState(false);
   const [decidingCheckpoint, setDecidingCheckpoint] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [providers, setProviders] = useState<ExecutionProvider[]>([]);
 
   // M7: Check auth on mount
   useEffect(() => {
@@ -423,8 +429,8 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [sr, pr, er, nr] = await Promise.all([api.status(), api.listProjects(), api.listEvents(30), api.listNotifications()]);
-      setStatus(sr); setProjects(pr.projects); setEvents(er.events); setNotifications(nr.notifications);
+      const [sr, pr, er, nr, runtimeList] = await Promise.all([api.status(), api.listProjects(), api.listEvents(30), api.listNotifications(), api.listExecutionProviders()]);
+      setStatus(sr); setProjects(pr.projects); setEvents(er.events); setNotifications(nr.notifications); setProviders(runtimeList.providers);
       await loadM3(pr.projects); setLoadState('ready'); setError(null);
     } catch (err) { setLoadState('error'); setError(err instanceof Error ? err.message : String(err)); }
   }, [loadM3]);
@@ -618,7 +624,7 @@ export default function App() {
               busy={objectiveBusy} creating={creatingObjective} onCreate={handleCreateObj}
               onStart={handleStart} onStop={handleStop} onComplete={handleComplete}
               onBlock={handleBlock} onFail={handleFail} onCancel={handleCancel}
-              onDecide={handleDecide} deciding={decidingCheckpoint} />
+              onDecide={handleDecide} deciding={decidingCheckpoint} providers={providers} />
           </div>)}
 
           {/* HISTORY TAB */}

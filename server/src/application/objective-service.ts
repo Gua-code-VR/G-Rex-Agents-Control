@@ -1,4 +1,4 @@
-import type { AgentAdapter } from '../integrations/agent-adapter.js';
+import type { ExecutionProviderRegistry } from '../integrations/execution-provider.js';
 import type { AgentSession, CreateObjectiveInput, Objective } from '../domain/objective.js';
 import { createObjectiveSchema } from '../domain/objective.js';
 import type { EventService } from './event-service.js';
@@ -38,7 +38,8 @@ export class ObjectiveService {
     private readonly projects: ProjectService,
     private readonly gitStatus: GitStatusService,
     private readonly events: EventService,
-    private readonly agent: AgentAdapter,
+    private readonly providers: ExecutionProviderRegistry,
+    private readonly defaultRuntime: string,
     private readonly heartbeatIntervalMs = 30_000,
   ) {}
 
@@ -61,6 +62,10 @@ export class ObjectiveService {
       );
     }
 
+    const runtime = parsed.runtime ?? this.defaultRuntime;
+    try { this.providers.require(runtime); } catch (error) {
+      throw new ObjectiveStateError(error instanceof Error ? error.message : 'Runtime non disponibile');
+    }
     const objective = this.objectives.create(projectId, parsed);
     // Evidenza di inizio lavoro (§6-SYSTEM): snapshot Git non distruttivo.
     const gitStart = await this.gitStatus.readSnapshot(projectId);
@@ -68,7 +73,7 @@ export class ObjectiveService {
       this.objectives.setGitStart(objective.id, gitStart);
     }
 
-    const session = this.sessions.createWithHeartbeat(objective.id, this.agent.agentType, this.heartbeatIntervalMs);
+    const session = this.sessions.createWithHeartbeat(objective.id, runtime, this.heartbeatIntervalMs);
 
     this.projects.setCurrentObjective(projectId, objective.id, objective.title);
     this.projects.setStatus(projectId, { status: 'IN_AVVIO' });

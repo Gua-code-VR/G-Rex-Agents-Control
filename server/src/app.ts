@@ -12,7 +12,7 @@ import { ProjectService } from './application/project-service.js';
 import { registerAuthRoutes, parseCookieToken } from './api/auth-routes.js';
 import { registerRoutes } from './api/routes.js';
 import { loadConfig, type AppConfig } from './config.js';
-import { ClineAdapter, FakeAgentAdapter, type AgentAdapter } from './integrations/agent-adapter.js';
+import { CodexProvider, ClineProvider, ExecutionProviderRegistry, FakeProvider } from './integrations/execution-provider.js';
 import { openDatabase } from './infrastructure/db/connection.js';
 import { AuthRepository } from './infrastructure/db/auth-repo.js';
 import { SqliteCheckpointRepository } from './infrastructure/db/checkpoint-repo.js';
@@ -37,7 +37,7 @@ export interface AppServices {
   objectives: ObjectiveService;
   agentSessions: AgentSessionService;
   checkpoints: CheckpointService;
-  agent: AgentAdapter;
+  providers: ExecutionProviderRegistry;
   auth: AuthService;
   notifications: NotificationService;
   backups: BackupService;
@@ -51,11 +51,12 @@ export interface BuiltApp {
 }
 
 /** Seleziona l'adapter agente (§8 e §14): fake per demo/test, Cline in produzione. */
-export function buildAgentAdapter(config: AppConfig): AgentAdapter {
-  if (config.agentMode === 'fake') {
-    return new FakeAgentAdapter();
-  }
-  return new ClineAdapter(config.clineCommand, config.clineEnabled);
+export function buildProviderRegistry(config: AppConfig): ExecutionProviderRegistry {
+  return new ExecutionProviderRegistry([
+    new FakeProvider(),
+    new ClineProvider(config.clineCommand, config.clineEnabled),
+    new CodexProvider(config.codexCommand, config.codexEnabled, config.codexModel),
+  ]);
 }
 
 /**
@@ -84,14 +85,15 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     projects,
     events,
   );
-  const agent = buildAgentAdapter(config);
+  const providers = buildProviderRegistry(config);
   const objectives = new ObjectiveService(
     objectiveRepository,
     sessionRepository,
     projects,
     gitStatus,
     events,
-    agent,
+    providers,
+    config.defaultRuntime,
     config.heartbeatIntervalMs,
   );
   const backups = new BackupService(config, events);
@@ -108,7 +110,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     projects,
     gitStatus,
     events,
-    agent,
+    providers,
     checkpoints,
     supervisor,
     notifications,
@@ -170,6 +172,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     config,
     notifications,
     backups,
+    providers,
   });
 
   return {
@@ -182,7 +185,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
       objectives,
       agentSessions,
       checkpoints,
-      agent,
+      providers,
       auth,
       notifications,
       backups,

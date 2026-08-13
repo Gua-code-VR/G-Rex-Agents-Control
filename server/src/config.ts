@@ -16,8 +16,11 @@ export interface AppConfig {
   clineCommand: string;
   /** True se l'integrazione Cline è abilitata (GAC_CLINE_ENABLED). */
   clineEnabled: boolean;
-  /** Adapter agente selezionato: 'fake' per demo/test, 'cline' altrimenti. */
-  agentMode: 'fake' | 'cline';
+  /** Runtime predefinito; ogni obiettivo può selezionarne uno diverso. */
+  defaultRuntime: string;
+  codexCommand: string;
+  codexEnabled: boolean;
+  codexModel: string | null;
   // M7: autenticazione e accesso remoto
   /** Giorni di durata sessione (default 30). */
   sessionTtlDays: number;
@@ -44,7 +47,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   // l'adapter simulato per demo senza CLI installata e per i test.
   const clineCommand = env.GAC_CLINE_COMMAND?.trim() || 'cline';
   const clineEnabled = env.GAC_CLINE_ENABLED !== 'false';
-  const agentMode = env.GAC_AGENT_MODE?.trim() === 'fake' ? 'fake' : 'cline';
+  // Compatibilità M3: GAC_AGENT_MODE resta un alias del runtime predefinito.
+  const defaultRuntime = env.GAC_DEFAULT_RUNTIME?.trim() || env.GAC_AGENT_MODE?.trim() || 'cline';
+  const codexCommand = env.GAC_CODEX_COMMAND?.trim() || 'codex';
+  const codexEnabled = env.GAC_CODEX_ENABLED !== 'false';
+  const codexModel = env.GAC_CODEX_MODEL?.trim() || null;
 
   // M7: sessione e rete
   const rawTtl = Number(env.GAC_SESSION_TTL_DAYS ?? 30);
@@ -61,7 +68,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     logLevel,
     clineCommand,
     clineEnabled,
-    agentMode,
+    defaultRuntime,
+    codexCommand,
+    codexEnabled,
+    codexModel,
     sessionTtlDays,
     bindAll,
     heartbeatIntervalMs,

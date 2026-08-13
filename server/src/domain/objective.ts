@@ -127,6 +127,7 @@ export interface CreateObjectiveInput {
   invariants: string[];
   acceptanceCriteria: string[];
   stopCondition: string | null;
+  runtime?: string;
 }
 
 /** Lista di vincoli/criteri: una riga per voce, mai vuote. */
@@ -143,6 +144,7 @@ export const createObjectiveSchema = z.object({
     .trim()
     .min(1, "Il testo dell'obiettivo è obbligatorio")
     .max(8000, "Il testo dell'obiettivo è troppo lungo (massimo 8000 caratteri)"),
+  runtime: z.string().trim().min(1).max(80).optional(),
   invariants: stringList,
   acceptanceCriteria: stringList,
   stopCondition: z

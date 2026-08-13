@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AgentAdapter } from '../integrations/agent-adapter.js';
+import type { ExecutionProviderRegistry, ExecutionResult } from '../integrations/execution-provider.js';
 import type { AgentSession, Objective } from '../domain/objective.js';
 import { blockSessionSchema, stopSessionSchema } from '../domain/objective.js';
 import { checkpointAgentSchema, type Checkpoint } from '../domain/checkpoint.js';
@@ -69,7 +69,7 @@ export class AgentSessionService {
     private readonly projects: ProjectService,
     private readonly gitStatus: GitStatusService,
     private readonly events: EventService,
-    private readonly agent: AgentAdapter,
+    private readonly providers: ExecutionProviderRegistry,
     private readonly checkpoints: CheckpointService,
     private readonly supervisor: ProcessSupervisor,
     private readonly notifications?: NotificationService,
@@ -91,23 +91,29 @@ export class AgentSessionService {
     }
 
     const project = this.projects.getById(objective.projectId);
-    const handle = await this.agent.startSession({
+    let provider;
+    try { provider = this.providers.require(session.agentType); } catch (error) {
+      throw new SessionStateError(error instanceof Error ? error.message : 'Runtime non disponibile');
+    }
+    const handle = await provider.start({
       objectiveId: objective.id,
       projectPath: project?.repositoryPath ?? null,
       objectiveText: objective.objectiveText,
       stopCondition: objective.stopCondition,
     });
 
-    this.sessions.setProcessReference(sessionId, handle.sessionRef);
+    this.sessions.setProcessReference(sessionId, handle.processReference);
     this.sessions.setStatus(sessionId, 'ATTIVA');
     this.sessions.touchActivity(sessionId);
     this.sessions.touchHeartbeat(sessionId);
 
     const attempt = await this.supervisor.startAttempt(session, {
-      runtimeType: session.agentType,
-      runtimeName: session.agentType,
-      processReference: handle.sessionRef,
-      metadata: { source: 'agent-session.start' },
+      runtimeType: handle.descriptor.runtimeType,
+      runtimeName: handle.descriptor.runtimeName,
+      providerName: handle.descriptor.providerName,
+      modelName: handle.descriptor.defaultModel,
+      processReference: handle.processReference,
+      metadata: { source: 'agent-session.start', runtimeId: handle.descriptor.id },
     });
 
     this.objectives.markActive(objectiveId, 'IN_LAVORAZIONE', new Date().toISOString());
@@ -118,12 +124,13 @@ export class AgentSessionService {
       objectiveId,
       sessionId,
       payload: {
-        agentType: handle.agentType,
-        sessionRef: handle.sessionRef,
+        agentType: handle.descriptor.id,
+        sessionRef: handle.processReference,
         executionAttemptId: attempt.id,
       },
     });
 
+    void handle.completion.then((result) => this.applyRuntimeResult(objectiveId, sessionId, result)).catch(() => undefined);
     return this.transition(objectiveId, sessionId, null);
   }
 
@@ -132,7 +139,7 @@ export class AgentSessionService {
     const session = this.sessions.getById(sessionId);
     if (!session || session.objectiveId !== objectiveId) throw new SessionStateError('Sessione non trovata per questo obiettivo');
     if (session.status !== 'ATTIVA') throw new SessionStateError('La sessione non è attiva');
-    await this.agent.touchHeartbeat(session.processReference ?? session.id);
+    await this.providers.require(session.agentType).touchHeartbeat(session.processReference ?? session.id);
     const updated = this.sessions.touchHeartbeat(session.id);
     this.sessions.touchActivity(session.id);
     this.events.log('session.heartbeat', {
@@ -162,7 +169,7 @@ export class AgentSessionService {
       throw new SessionStateError('La sessione non è attiva');
     }
 
-    await this.agent.stopSession(session.processReference ?? sessionId, parsed.reason ?? undefined);
+    await this.providers.require(session.agentType).stop(session.processReference ?? sessionId, parsed.reason ?? undefined);
     // Evidenza di fine lavoro (§6-SYSTEM): snapshot Git al momento dello stop.
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
 
@@ -211,7 +218,7 @@ export class AgentSessionService {
    * una decisione umana che arriverà con M5; intanto il checkpoint di
    * conclusione resta PENDING_DECISION con le evidenze §6 (SYSTEM+AGENT).
    */
-  async complete(objectiveId: string, input: unknown = {}): Promise<SessionTransition> {
+  async complete(objectiveId: string, input: unknown = {}, runtimeResult?: ExecutionResult): Promise<SessionTransition> {
     const parsed = completeSessionSchema.parse(input);
     const objective = this.objectives.getById(objectiveId);
     if (!objective) throw new SessionStateError('Obiettivo non trovato');
@@ -225,9 +232,9 @@ export class AgentSessionService {
     await this.supervisor.finalizeLatestAttempt(session.id, {
       endedAt: new Date().toISOString(),
       status: 'COMPLETED',
-      exitCode: 0,
-      reason: 'Sessione completata con successo',
-      metadata: { finalEvent: 'session.complete' },
+      exitCode: runtimeResult?.exitCode ?? 0,
+      reason: runtimeResult?.reason ?? 'Sessione completata con successo',
+      metadata: { finalEvent: 'session.complete', runtime: runtimeResult?.metadata ?? null },
     });
     this.objectives.conclude(objectiveId, report, gitEnd);
     this.projects.setStatus(objective.projectId, { status: 'RICHIEDE_ATTENZIONE' });
@@ -310,7 +317,7 @@ export class AgentSessionService {
   }
 
   /** Segna l'obiettivo in errore: sessione ERRORE, obiettivo ERRORE, progetto ERRORE. */
-  async fail(objectiveId: string, input: unknown = {}): Promise<SessionTransition> {
+  async fail(objectiveId: string, input: unknown = {}, runtimeResult?: ExecutionResult): Promise<SessionTransition> {
     const parsed = failSessionSchema.parse(input);
     const objective = this.objectives.getById(objectiveId);
     if (!objective) throw new SessionStateError('Obiettivo non trovato');
@@ -324,9 +331,10 @@ export class AgentSessionService {
     await this.supervisor.finalizeLatestAttempt(session.id, {
       endedAt: new Date().toISOString(),
       status: 'FAILED',
+      exitCode: runtimeResult?.exitCode ?? null,
       reason: detail,
-      errorClass: 'USER_REPORTED',
-      metadata: { finalEvent: 'session.fail' },
+      errorClass: runtimeResult?.errorClass ?? 'USER_REPORTED',
+      metadata: { finalEvent: 'session.fail', runtime: runtimeResult?.metadata ?? null },
     });
     this.objectives.setStatus(objectiveId, 'ERRORE');
     if (gitEnd) this.objectives.setGitEnd(objectiveId, gitEnd);
@@ -370,6 +378,21 @@ export class AgentSessionService {
       }
     }
     return null;
+  }
+
+  /** Bridges a provider result back into the existing Control Plane lifecycle. */
+  private async applyRuntimeResult(objectiveId: string, sessionId: string, result: ExecutionResult): Promise<void> {
+    const session = this.sessions.getById(sessionId);
+    if (!session || session.status !== 'ATTIVA') return; // a human transition already won the race
+    if (result.outcome === 'COMPLETED') {
+      await this.complete(objectiveId, { report: result.reason ?? `Completato da ${session.agentType}` }, result);
+      return;
+    }
+    if (result.outcome === 'FAILED') {
+      await this.fail(objectiveId, { error: result.reason ?? `Errore del runtime ${session.agentType}` }, result);
+      return;
+    }
+    await this.stop(objectiveId, sessionId, { reason: result.reason ?? `Runtime ${session.agentType} interrotto` });
   }
 
   private transition(

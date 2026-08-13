@@ -152,6 +152,7 @@ un repository valido, lo snapshot registra l'errore in modo esplicito.
 | `GET` | `/api/notifications` | Notifiche M8 non lette |
 | `POST` | `/api/notifications/read-all` | Segna tutte le notifiche come lette |
 | `POST` | `/api/backups` | Crea un backup locale di database, configurazione e report |
+| `GET` | `/api/execution-providers` | Elenca runtime registrati e relativa disponibilità |
 
 ## Persistenza e configurazione
 
@@ -167,6 +168,10 @@ d'ambiente opzionali:
 | `GAC_CLINE_COMMAND` | `cline` | Comando della CLI Cline (percorso o nome sul PATH) |
 | `GAC_CLINE_ENABLED` | `true` | Abilita l'adapter Cline (`false` per disabilitarlo) |
 | `GAC_AGENT_MODE` | `cline` | Adapter agente: `fake` (demo/test) o `cline` |
+| `GAC_DEFAULT_RUNTIME` | `cline` | Runtime predefinito per i nuovi obiettivi (sostituisce `GAC_AGENT_MODE`, mantenuto come alias) |
+| `GAC_CODEX_COMMAND` | `codex` | Comando della Codex CLI sul PATH |
+| `GAC_CODEX_ENABLED` | `true` | Abilita il runtime Codex CLI |
+| `GAC_CODEX_MODEL` | — | Modello Codex facoltativo da passare alla CLI |
 | `GAC_HEARTBEAT_INTERVAL_MS` | `30000` | Intervallo massimo senza heartbeat prima di dichiarare una sessione stale |
 | `GAC_STALE_CHECK_INTERVAL_MS` | `30000` | Frequenza del controllo automatico delle sessioni stale |
 
@@ -184,6 +189,17 @@ mostra e permette di archiviare le notifiche non lette.
 Gli eventi sono classificati `USER`, `TECHNICAL` o `AGENT` e filtrabili con
 `GET /api/events?category=...`. I backup timestampati in `data/backups/`
 contengono database SQLite, configurazione non sensibile e report.
+
+### M9 — orchestrazione multi-provider
+
+Il Control Plane usa un registry di runtime intercambiabili (`fake`, `cline`,
+`codex`). Il runtime viene scelto per ogni nuovo obiettivo e salvato nella
+sessione; ogni avvio crea un `ExecutionAttempt` con runtime, provider, modello
+e riferimento di processo normalizzati. Cline e Codex restano adapter del
+medesimo contratto: il Control Plane non contiene ramificazioni specifiche.
+
+Codex usa la CLI non interattiva (`codex exec --json`) in sandbox
+`workspace-write` con approvazioni automatiche, senza bypass di sandbox.
 
 ## Struttura
 

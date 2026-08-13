@@ -25,7 +25,7 @@ export class BackupService {
     files.push(path.basename(report));
     const configuration = path.join(directory, 'config.json');
     fs.writeFileSync(configuration, JSON.stringify({
-      host: this.config.host, port: this.config.port, agentMode: this.config.agentMode,
+      host: this.config.host, port: this.config.port, defaultRuntime: this.config.defaultRuntime,
       heartbeatIntervalMs: this.config.heartbeatIntervalMs, staleCheckIntervalMs: this.config.staleCheckIntervalMs,
     }, null, 2));
     files.push(path.basename(configuration));
