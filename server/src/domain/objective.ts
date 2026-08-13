@@ -104,6 +104,7 @@ export interface Objective {
   createdAt: string;
   updatedAt: string;
   policy: BudgetPolicy | null;
+  estimatedCost: number | null;
 }
 
 /** AgentSession (§5): sessione agente legata a un Objective. */
@@ -130,6 +131,7 @@ export interface CreateObjectiveInput {
   acceptanceCriteria: string[];
   stopCondition: string | null;
   runtime?: string;
+  estimatedCost?: number | null;
 }
 
 /** Lista di vincoli/criteri: una riga per voce, mai vuote. */
@@ -147,6 +149,7 @@ export const createObjectiveSchema = z.object({
     .min(1, "Il testo dell'obiettivo è obbligatorio")
     .max(8000, "Il testo dell'obiettivo è troppo lungo (massimo 8000 caratteri)"),
   runtime: z.string().trim().min(1).max(80).optional(),
+  estimatedCost: z.number().finite().positive().nullable().optional(),
   invariants: stringList,
   acceptanceCriteria: stringList,
   stopCondition: z

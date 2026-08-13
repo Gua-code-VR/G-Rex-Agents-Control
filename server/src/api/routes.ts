@@ -110,6 +110,14 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     if (!deps.projects.getById(id)) return reply.code(404).send({ message: 'Progetto non trovato' });
     return { governance: deps.governance.dashboard(id) };
   });
+  app.get('/api/governance/portfolio', async () => ({ projects: deps.governance.portfolio() }));
+  app.get('/api/governance/approvals', async (req) => ({ approvals: deps.governance.listApprovals((req.query as { objectiveId?: string } | undefined)?.objectiveId) }));
+  app.post('/api/governance/approvals/:id/decide', async (req, reply) => {
+    const body = req.body as { approve?: boolean; note?: string } | undefined;
+    if (!body || typeof body.approve !== 'boolean') return reply.code(400).send({ message: 'Decisione di governance non valida' });
+    const approval = deps.governance.decideApproval((req.params as { id: string }).id, body.approve, body.note);
+    return approval ? { approval } : reply.code(404).send({ message: 'Richiesta di approvazione non trovata o già decisa' });
+  });
 
   app.put('/api/projects/:id/policy', async (req, reply) => {
     try { const policy = deps.governance.setPolicy('PROJECT', (req.params as { id: string }).id, req.body); return policy ? { policy } : reply.code(404).send({ message: 'Progetto non trovato' }); }
@@ -233,6 +241,11 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.post('/api/objectives/:id/governance/exceptions', async (req, reply) => {
     try { const exception = deps.governance.grantException((req.params as { id: string }).id, (req.body ?? {}) as { note?: string; expiresAt?: string | null }); return exception ? reply.code(201).send({ exception }) : reply.code(404).send({ message: 'Obiettivo non trovato' }); }
     catch (err) { return reply.code(400).send({ message: err instanceof Error ? err.message : 'Eccezione non valida' }); }
+  });
+  app.get('/api/objectives/:id/governance/exceptions', async (req) => ({ exceptions: deps.governance.listExceptions((req.params as { id: string }).id) }));
+  app.post('/api/governance/exceptions/:id/revoke', async (req, reply) => {
+    const exception = deps.governance.revokeException((req.params as { id: string }).id, (req.body as { note?: string } | undefined)?.note);
+    return exception ? { exception } : reply.code(404).send({ message: 'Eccezione non trovata o già revocata' });
   });
 
   app.get('/api/objectives/:id/checkpoints', async (req, reply) => {

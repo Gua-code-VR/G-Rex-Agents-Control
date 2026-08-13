@@ -106,11 +106,12 @@ function GitStatusBox({
 
 function GovernanceCard({ project }: { project: Project }) {
   const [data, setData] = useState<GovernanceDashboard | null>(null);
+  const [approvals, setApprovals] = useState<import('./api/client').GovernanceApproval[]>([]);
   const [budget, setBudget] = useState(project.policy?.costBudget?.toString() ?? '');
   const [warning, setWarning] = useState((project.policy?.warningPercent ?? 80).toString());
   const [action, setAction] = useState(project.policy?.action ?? 'WARN');
   const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { try { setData((await api.getProjectGovernance(project.id)).governance); } catch { setData(null); } }, [project.id]);
+  const load = useCallback(async () => { try { const [governance, all] = await Promise.all([api.getProjectGovernance(project.id), api.listGovernanceApprovals()]); setData(governance.governance); const ids = new Set(governance.governance.objectives.map((o) => o.id)); setApprovals(all.approvals.filter((a) => ids.has(a.objectiveId))); } catch { setData(null); } }, [project.id]);
   useEffect(() => { void load(); }, [load]);
   const save = async () => { setBusy(true); try { await api.setProjectPolicy(project.id, { costBudget: budget.trim() ? Number(budget) : null, warningPercent: Number(warning), action }); await load(); } finally { setBusy(false); } };
   return <section className="governance-box">
@@ -118,11 +119,19 @@ function GovernanceCard({ project }: { project: Project }) {
     {data ? <><p className="muted small">Usato € {data.budget.used.toFixed(4)} · Residuo {data.budget.remaining === null ? 'illimitato' : `€ ${data.budget.remaining.toFixed(4)}`} · {data.totals.totalTokens} token</p>
       <p className="muted small">Provider/modelli: {data.breakdown.length ? data.breakdown.map((b) => `${b.providerName}/${b.modelName}: € ${Number(b.cost).toFixed(4)}`).join(' · ') : 'nessun attempt'}</p>
       {data.trend.length > 0 && <p className="muted small">Trend: {data.trend.map((t) => `${t.date} € ${Number(t.cost).toFixed(4)}`).join(' · ')}</p>}
+      {approvals.filter((a) => a.status === 'PENDING').map((a) => <p key={a.id} className="muted small">Approvazione € {a.projectedCost.toFixed(4)}: <button className="btn btn-ghost" onClick={() => void api.decideGovernanceApproval(a.id, true).then(load)}>Approva</button> <button className="btn btn-ghost" onClick={() => void api.decideGovernanceApproval(a.id, false).then(load)}>Rifiuta</button></p>)}
     </> : <p className="muted small">Caricamento dati governance…</p>}
     <div className="status-row"><input aria-label="Budget progetto" type="number" min="0" step="0.001" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget € (vuoto = nessun limite)" /><input aria-label="Soglia warning" type="number" min="1" max="100" value={warning} onChange={(e) => setWarning(e.target.value)} placeholder="Soglia %" />
       <select aria-label="Azione budget" value={action} onChange={(e) => setAction(e.target.value as 'WARN' | 'HARD_STOP' | 'REQUIRE_APPROVAL')}><option value="WARN">Avviso</option><option value="HARD_STOP">Hard stop</option><option value="REQUIRE_APPROVAL">Approvazione umana</option></select>
       <button type="button" className="btn" disabled={busy} onClick={() => void save()}>{busy ? 'Salvo…' : 'Salva policy'}</button></div>
   </section>;
+}
+
+function PortfolioGovernance() {
+  const [items, setItems] = useState<Array<{ project: { id: string; name: string }; governance: GovernanceDashboard }>>([]);
+  const load = useCallback(() => { void api.getGovernancePortfolio().then((r) => setItems(r.projects)).catch(() => undefined); }, []);
+  useEffect(load, [load]);
+  return <section className="card"><div className="git-box-head"><h2>Portafoglio budget</h2><button className="btn btn-ghost" onClick={load}>Aggiorna</button></div>{items.length === 0 ? <p className="muted">Nessun consumo registrato.</p> : <ul className="git-line">{items.map(({ project, governance }) => <li key={project.id}><strong>{project.name}</strong>: € {governance.budget.used.toFixed(4)} / {governance.policy.costBudget === null ? 'illimitato' : `€ ${governance.policy.costBudget.toFixed(4)}`} {governance.budget.remaining !== null && governance.budget.remaining <= 0 ? '— a rischio' : ''}</li>)}</ul>}</section>;
 }
 
 // ── ProjectCard ───────────────────────────────────────────────────────
@@ -204,6 +213,9 @@ function ObjectiveCard({
   const [policyWarning, setPolicyWarning] = useState((objective.policy?.warningPercent ?? 80).toString());
   const [policyAction, setPolicyAction] = useState(objective.policy?.action ?? 'WARN');
   const [policyBusy, setPolicyBusy] = useState(false);
+  const [exceptions, setExceptions] = useState<import('./api/client').GovernanceException[]>([]);
+  const loadExceptions = useCallback(() => { void api.listGovernanceExceptions(objective.id).then((r) => setExceptions(r.exceptions)).catch(() => undefined); }, [objective.id]);
+  useEffect(loadExceptions, [loadExceptions]);
   const savePolicy = async () => { setPolicyBusy(true); try { await api.setObjectivePolicy(objective.id, { costBudget: policyBudget.trim() ? Number(policyBudget) : null, warningPercent: Number(policyWarning), action: policyAction }); } finally { setPolicyBusy(false); } };
   const hasOpenSession = sessions.some(
     (s) => OPEN_OBJECTIVE_STATUSES.includes(objective.status) && (s.status === 'IN_AVVIO' || s.status === 'ATTIVA'),
@@ -220,6 +232,7 @@ function ObjectiveCard({
       </header>
       <p className="objective">{objective.objectiveText}</p>
       <details className="governance-box"><summary>Policy budget obiettivo {objective.policy ? '(override attivo)' : '(eredita progetto)'}</summary><div className="status-row"><input type="number" min="0" step="0.001" value={policyBudget} onChange={(e) => setPolicyBudget(e.target.value)} placeholder="Budget €" /><input type="number" min="1" max="100" value={policyWarning} onChange={(e) => setPolicyWarning(e.target.value)} placeholder="Soglia %" /><select value={policyAction} onChange={(e) => setPolicyAction(e.target.value as 'WARN' | 'HARD_STOP' | 'REQUIRE_APPROVAL')}><option value="WARN">Avviso</option><option value="HARD_STOP">Hard stop</option><option value="REQUIRE_APPROVAL">Approvazione umana</option></select><button type="button" className="btn" disabled={policyBusy} onClick={() => void savePolicy()}>{policyBusy ? 'Salvo…' : 'Salva override'}</button></div></details>
+      {exceptions.filter((exception) => !exception.revokedAt).length > 0 && <p className="muted small">Eccezioni attive: {exceptions.filter((exception) => !exception.revokedAt).map((exception) => <span key={exception.id}> {exception.note ?? exception.id.slice(0, 8)} <button className="btn btn-ghost" onClick={() => void api.revokeGovernanceException(exception.id).then(loadExceptions)}>Revoca</button></span>)}</p>}
       {objective.invariants && (
         <div className="objective-section">
           <span className="objective-label">Invarianti</span>
@@ -350,6 +363,7 @@ function ObjectivesSection({
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [stopCondition, setStopCondition] = useState('');
   const [runtime, setRuntime] = useState('');
+  const [estimatedCost, setEstimatedCost] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const selected = projects.find((p) => p.id === selectedProjectId) ?? null;
   const objectives = selected ? objectivesByProject[selected.id] ?? [] : [];
@@ -364,7 +378,8 @@ function ObjectivesSection({
       ...(acceptanceCriteria.trim() ? { acceptanceCriteria: splitLines(acceptanceCriteria) } : {}),
       ...(stopCondition.trim() ? { stopCondition: stopCondition.trim() } : {}),
       ...(runtime ? { runtime } : {}),
-    }).then(() => { setTitle(''); setObjectiveText(''); setInvariants(''); setAcceptanceCriteria(''); setStopCondition(''); });
+      ...(estimatedCost.trim() ? { estimatedCost: Number(estimatedCost) } : {}),
+    }).then(() => { setTitle(''); setObjectiveText(''); setInvariants(''); setAcceptanceCriteria(''); setStopCondition(''); setEstimatedCost(''); });
   };
   return (
     <div className="objectives-section">
@@ -383,6 +398,7 @@ function ObjectivesSection({
           <label className="field">Titolo * <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Titolo breve" maxLength={200} disabled={creating} /></label>
           <label className="field">Obiettivo * <textarea value={objectiveText} onChange={(e) => setObjectiveText(e.target.value)} rows={3} maxLength={5000} placeholder="Descrizione dettagliata" disabled={creating} /></label>
           <label className="field">Runtime <select value={runtime} onChange={(e) => setRuntime(e.target.value)} disabled={creating}><option value="">Predefinito</option>{providers.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.runtimeName}{provider.configured ? '' : ' (non disponibile)'}</option>)}</select></label>
+          <label className="field">Stima costo affidabile (€) <input type="number" min="0" step="0.001" value={estimatedCost} onChange={(e) => setEstimatedCost(e.target.value)} placeholder="Opzionale: abilita enforcement preventivo" disabled={creating} /></label>
           <label className="field">Invarianti <textarea value={invariants} onChange={(e) => setInvariants(e.target.value)} rows={2} maxLength={5000} placeholder="Invarianti (uno per riga)" disabled={creating} /></label>
           <label className="field">Criteri di accettazione <textarea value={acceptanceCriteria} onChange={(e) => setAcceptanceCriteria(e.target.value)} rows={2} maxLength={5000} placeholder="Criteri (uno per riga)" disabled={creating} /></label>
           <label className="field">Condizione di stop <input value={stopCondition} onChange={(e) => setStopCondition(e.target.value)} placeholder="Condizione di stop" maxLength={2000} disabled={creating} /></label>
@@ -638,6 +654,7 @@ export default function App() {
 
           {/* PROJECTS TAB */}
           {activeTab === 'projects' && (<div className="tab-content">
+            <PortfolioGovernance />
             <section className="card">
               <h2>Nuovo progetto</h2>
               <form onSubmit={handleSubmit} className="create-project-form">

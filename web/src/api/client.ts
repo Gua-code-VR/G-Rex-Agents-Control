@@ -135,7 +135,10 @@ export interface Objective {
   createdAt: string;
   updatedAt: string;
   policy: BudgetPolicy | null;
+  estimatedCost: number | null;
 }
+export interface GovernanceApproval { id: string; objectiveId: string; projectedCost: number; status: 'PENDING' | 'APPROVED' | 'REJECTED'; requestNote: string | null; decisionNote: string | null; createdAt: string; decidedAt: string | null; }
+export interface GovernanceException { id: string; objectiveId: string; note: string | null; expiresAt: string | null; createdAt: string; revokedAt: string | null; }
 
 export interface AgentSession {
   id: string;
@@ -204,6 +207,7 @@ export interface CreateObjectiveInput {
   acceptanceCriteria?: string[];
   stopCondition?: string | null;
   runtime?: string;
+  estimatedCost?: number | null;
 }
 
 export interface ExecutionProvider { id: string; runtimeName: string; providerName: string; configured: boolean; }
@@ -292,6 +296,11 @@ export const api = {
   setProjectPolicy: (id: string, policy: BudgetPolicy) => request<{ policy: BudgetPolicy }>(`/api/projects/${id}/policy`, { method: 'PUT', body: JSON.stringify(policy) }),
   setObjectivePolicy: (id: string, policy: BudgetPolicy) => request<{ policy: BudgetPolicy }>(`/api/objectives/${id}/policy`, { method: 'PUT', body: JSON.stringify(policy) }),
   grantBudgetException: (id: string, note?: string, expiresAt?: string) => request<{ exception: { id: string; expiresAt: string | null } }>(`/api/objectives/${id}/governance/exceptions`, { method: 'POST', body: JSON.stringify({ note, expiresAt }) }),
+  listGovernanceApprovals: (objectiveId?: string) => request<{ approvals: GovernanceApproval[] }>(`/api/governance/approvals${objectiveId ? `?objectiveId=${encodeURIComponent(objectiveId)}` : ''}`),
+  decideGovernanceApproval: (id: string, approve: boolean, note?: string) => request<{ approval: GovernanceApproval }>(`/api/governance/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, note }) }),
+  listGovernanceExceptions: (id: string) => request<{ exceptions: GovernanceException[] }>(`/api/objectives/${id}/governance/exceptions`),
+  revokeGovernanceException: (id: string, note?: string) => request<{ exception: GovernanceException }>(`/api/governance/exceptions/${id}/revoke`, { method: 'POST', body: JSON.stringify({ note }) }),
+  getGovernancePortfolio: () => request<{ projects: Array<{ project: { id: string; name: string }; governance: GovernanceDashboard }> }>('/api/governance/portfolio'),
   refreshProjectGitStatus: (id: string) =>
     request<{ project: Project }>(`/api/projects/${id}/git-status`, {
       method: 'POST',

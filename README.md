@@ -3,7 +3,7 @@
 Piano di controllo locale per più agenti di sviluppo, conforme alla sorgente di
 verità [`docs/G-Rex-Agent-Control-Progettazione-V1.md`](docs/G-Rex-Agent-Control-Progettazione-V1.md).
 
-**Stato: M6 — Storico e tracciabilità.**
+**Stato: M13 — enforcement governato e approvazione budget.**
 
 ## Cosa offre M2
 
@@ -187,6 +187,18 @@ auditabili. Il pannello progetto mostra budget usato/residuo, breakdown
 provider/modello e trend giornaliero. API: `GET /api/projects/:id/governance`,
 `PUT /api/projects/:id/policy`, `PUT /api/objectives/:id/policy` e
 `POST /api/objectives/:id/governance/exceptions`.
+
+### M13 — enforcement governato e approvazione budget
+
+**Stato reale del repository: M13 completata.**
+
+Quando è disponibile una stima di costo attendibile, Agent Control la valuta prima dell’avvio.
+`REQUIRE_APPROVAL` sospende la sessione e crea una richiesta esplicita, approvabile o
+rifiutabile una sola volta; decisione ed eccezione autorizzata sono auditabili e
+l’eccezione è revocabile. Il pannello include richieste pendenti, eccezioni attive e
+portafoglio multi-progetto. API: `GET /api/governance/portfolio`,
+`GET /api/governance/approvals`, `POST /api/governance/approvals/:id/decide`,
+`GET /api/objectives/:id/governance/exceptions`, `POST /api/governance/exceptions/:id/revoke`.
 | `GAC_HEARTBEAT_INTERVAL_MS` | `30000` | Intervallo massimo senza heartbeat prima di dichiarare una sessione stale |
 | `GAC_STALE_CHECK_INTERVAL_MS` | `30000` | Frequenza del controllo automatico delle sessioni stale |
 

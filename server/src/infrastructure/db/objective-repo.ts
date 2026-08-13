@@ -27,6 +27,7 @@ interface ObjectiveRow {
   created_at: string;
   updated_at: string;
   policy_json: string | null;
+  estimated_cost: number | null;
 }
 function parsePolicy(raw: string | null): BudgetPolicy | null { try { return raw ? budgetPolicySchema.parse(JSON.parse(raw)) : null; } catch { return null; } }
 
@@ -69,6 +70,7 @@ function toObjective(row: ObjectiveRow): Objective {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     policy: parsePolicy(row.policy_json),
+    estimatedCost: row.estimated_cost,
   };
 }
 
@@ -153,10 +155,10 @@ export class SqliteObjectiveRepository implements ObjectiveRepository {
     this.insertStmt = db.prepare(
       `INSERT INTO objectives
          (id, project_id, title, objective_text, invariants, acceptance_criteria,
-          stop_condition, status, created_at, updated_at)
+          stop_condition, status, estimated_cost, created_at, updated_at)
        VALUES
          (:id, :projectId, :title, :objectiveText, :invariants, :acceptanceCriteria,
-          :stopCondition, :status, :createdAt, :updatedAt)`,
+          :stopCondition, :status, :estimatedCost, :createdAt, :updatedAt)`,
     );
     this.getStmt = db.prepare('SELECT * FROM objectives WHERE id = ?');
     this.listByProjectStmt = db.prepare(
@@ -201,6 +203,7 @@ create(projectId: string, input: CreateObjectiveInput): Objective {
         input.acceptanceCriteria.length > 0 ? JSON.stringify(input.acceptanceCriteria) : null,
       stopCondition: input.stopCondition,
       status: 'IN_AVVIO',
+      estimatedCost: input.estimatedCost ?? null,
       createdAt: now,
       updatedAt: now,
     });

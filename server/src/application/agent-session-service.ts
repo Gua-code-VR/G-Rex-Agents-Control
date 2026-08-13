@@ -92,6 +92,10 @@ export class AgentSessionService {
       throw new SessionStateError("L'obiettivo non è in attesa di avvio");
     }
 
+    const preflight = this.governance?.preflight(objectiveId, objective.estimatedCost);
+    if (preflight?.decision === 'HARD_STOP') throw new SessionStateError('Budget preventivo superato dalla stima dell’obiettivo');
+    if (preflight?.decision === 'REQUIRE_APPROVAL') throw new SessionStateError(`Approvazione budget richiesta (${preflight.approval?.id ?? 'in attesa'})`);
+
     const project = this.projects.getById(objective.projectId);
     let provider;
     try { provider = this.providers.require(session.agentType); } catch (error) {
@@ -396,10 +400,9 @@ export class AgentSessionService {
     const session = this.sessions.getById(sessionId);
     if (!session || session.status !== 'ATTIVA') return; // a human transition already won the race
     if (result.outcome === 'COMPLETED') {
-      const current = this.supervisor.totals(sessionId).costActual;
       const pending = result.usage?.costActual ?? result.usage?.costEstimate ?? 0;
-      const governance = this.governance?.evaluate(objectiveId, current + pending);
-      if (governance) this.governance?.recordDecision(objectiveId, governance.decision, current + pending);
+      const governance = this.governance?.evaluateAdditionalCost(objectiveId, pending);
+      if (governance) this.governance?.recordDecision(objectiveId, governance.decision, pending);
       if (governance?.decision === 'HARD_STOP' || (!governance && this.supervisor.exceedsBudget(sessionId, pending))) {
         await this.fail(objectiveId, { error: 'Budget di esecuzione superato' }, { ...result, outcome: 'FAILED', errorClass: 'AGENT_CONTROL_ERROR' });
         return;

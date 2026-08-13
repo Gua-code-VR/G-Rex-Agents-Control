@@ -15,7 +15,7 @@ import type { DatabaseSync } from 'node:sqlite';
  *   (USER/TECHNICAL/AGENT per §11 separazione log).
  * La migrazione è idempotente: DDL IF NOT EXISTS + ALTER TABLE colonne mancanti.
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS objectives (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
   ,policy_json TEXT
+  ,estimated_cost REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_objectives_project_id ON objectives (project_id);
@@ -160,6 +161,13 @@ CREATE TABLE IF NOT EXISTS governance_exceptions (
 );
 CREATE INDEX IF NOT EXISTS idx_governance_exceptions_objective ON governance_exceptions (objective_id);
 
+CREATE TABLE IF NOT EXISTS governance_approvals (
+  id TEXT PRIMARY KEY, objective_id TEXT NOT NULL, projected_cost REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING', request_note TEXT, decision_note TEXT,
+  created_at TEXT NOT NULL, decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_governance_approvals_objective ON governance_approvals (objective_id);
+
 CREATE INDEX IF NOT EXISTS idx_checkpoints_objective_id ON checkpoints (objective_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_status ON checkpoints (status);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_created_at ON checkpoints (created_at);
@@ -211,6 +219,7 @@ export function applySchema(db: DatabaseSync): void {
   ensureColumn(db, 'execution_attempts', 'cost_actual', 'cost_actual REAL');
   ensureColumn(db, 'projects', 'policy_json', 'policy_json TEXT');
   ensureColumn(db, 'objectives', 'policy_json', 'policy_json TEXT');
+  ensureColumn(db, 'objectives', 'estimated_cost', 'estimated_cost REAL');
   // Migrazione v7: tabella notifications per M8.
   // Tabella già creata nel DDL, ma serve per vecchi DB.
   // (DDL IF NOT EXISTS la crea se manca)
