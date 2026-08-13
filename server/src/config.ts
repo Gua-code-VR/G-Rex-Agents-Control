@@ -24,6 +24,7 @@ export interface AppConfig {
   executionRetryMax: number;
   executionRetryBackoffMs: number;
   executionFallbackRuntime: string | null;
+  executionCostBudget: number | null;
   // M7: autenticazione e accesso remoto
   /** Giorni di durata sessione (default 30). */
   sessionTtlDays: number;
@@ -58,6 +59,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const executionRetryMax = boundedInt(env.GAC_EXECUTION_RETRY_MAX, 1, 0, 5);
   const executionRetryBackoffMs = positiveMs(env.GAC_EXECUTION_RETRY_BACKOFF_MS, 1_000);
   const executionFallbackRuntime = env.GAC_EXECUTION_FALLBACK_RUNTIME?.trim() || null;
+  const executionCostBudget = nonNegativeNumber(env.GAC_EXECUTION_COST_BUDGET);
 
   // M7: sessione e rete
   const rawTtl = Number(env.GAC_SESSION_TTL_DAYS ?? 30);
@@ -81,6 +83,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     executionRetryMax,
     executionRetryBackoffMs,
     executionFallbackRuntime,
+    executionCostBudget,
     sessionTtlDays,
     bindAll,
     heartbeatIntervalMs,
@@ -97,3 +100,4 @@ function boundedInt(value: string | undefined, fallback: number, min: number, ma
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }
+function nonNegativeNumber(value: string | undefined): number | null { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : null; }

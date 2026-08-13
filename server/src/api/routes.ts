@@ -27,6 +27,7 @@ import type { NotificationService } from '../application/notification-service.js
 import type { BackupService } from '../application/backup-service.js';
 import type { ExecutionProviderRegistry } from '../integrations/execution-provider.js';
 import type { ExecutionAttemptRepository } from '../infrastructure/db/execution-attempt-repo.js';
+import type { ProcessSupervisor } from '../application/process-supervisor.js';
 
 export interface ApiDeps {
   projects: ProjectService;
@@ -41,6 +42,7 @@ export interface ApiDeps {
   backups: BackupService;
   providers: ExecutionProviderRegistry;
   attempts: ExecutionAttemptRepository;
+  supervisor: ProcessSupervisor;
 }
 
 /** API REST di M4 (Web App/API, §7): registro progetti, obiettivi, sessioni
@@ -48,6 +50,7 @@ export interface ApiDeps {
 export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.get('/api/execution-providers', async () => ({ providers: deps.providers.list() }));
   app.get('/api/sessions/:id/execution-attempts', async (req) => ({ attempts: deps.attempts.listBySession((req.params as { id: string }).id) }));
+  app.get('/api/sessions/:id/execution-metrics', async (req) => ({ metrics: deps.supervisor.totals((req.params as { id: string }).id) }));
   app.get('/api/health', async () => ({
     status: 'ok',
     service: 'g-rex-agent-control',

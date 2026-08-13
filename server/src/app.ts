@@ -76,7 +76,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const checkpoints = new CheckpointService(checkpointRepository, events);
   const decisionRepository = new SqliteDecisionRepository(db);
   const attemptsRepository = new SqliteExecutionAttemptRepository(db);
-  const supervisor = new ProcessSupervisor(attemptsRepository, events, { retryMax: config.executionRetryMax, retryBackoffMs: config.executionRetryBackoffMs, fallbackRuntime: config.executionFallbackRuntime });
+  const supervisor = new ProcessSupervisor(attemptsRepository, events, { retryMax: config.executionRetryMax, retryBackoffMs: config.executionRetryBackoffMs, fallbackRuntime: config.executionFallbackRuntime, costBudget: config.executionCostBudget });
   const decisions = new DecisionService(
     decisionRepository,
     checkpointRepository,
@@ -174,6 +174,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     backups,
     providers,
     attempts: attemptsRepository,
+    supervisor,
   });
 
   return {

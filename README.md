@@ -175,6 +175,7 @@ d'ambiente opzionali:
 | `GAC_EXECUTION_RETRY_MAX` | `1` | Retry massimi per errori transienti per runtime |
 | `GAC_EXECUTION_RETRY_BACKOFF_MS` | `1000` | Backoff lineare tra retry e fallback |
 | `GAC_EXECUTION_FALLBACK_RUNTIME` | — | Runtime alternativo dopo l’esaurimento dei retry |
+| `GAC_EXECUTION_COST_BUDGET` | — | Budget massimo globale di costo per attempt (governance/alert) |
 | `GAC_HEARTBEAT_INTERVAL_MS` | `30000` | Intervallo massimo senza heartbeat prima di dichiarare una sessione stale |
 | `GAC_STALE_CHECK_INTERVAL_MS` | `30000` | Frequenza del controllo automatico delle sessioni stale |
 
@@ -214,6 +215,15 @@ Gli errori di connettività/controllo generano retry con backoff; al loro
 esaurimento il supervisor può avviare il runtime di fallback, collegandolo al
 tentativo originario tramite `fallbackOfAttemptId` senza cambiare il lifecycle
 business della sessione.
+
+### M11 — usage e costo
+
+Gli adapter estraggono usage dal loro output nel contratto comune; token e costo
+stimato/reale sono persistiti su ogni `ExecutionAttempt` e mostrati nella
+sessione. `GET /api/sessions/:id/execution-metrics` fornisce i totali della
+sessione. Se il budget globale configurato è superato, viene registrato
+`execution.budget.exceeded` e la sessione passa in errore, con checkpoint e
+notifiche già previste dal lifecycle.
 
 ## Struttura
 

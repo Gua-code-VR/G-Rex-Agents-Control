@@ -15,9 +15,11 @@ export const EVENT_EXECUTION_ATTEMPT_CANCELLED = 'execution.attempt.cancelled';
 export const EVENT_EXECUTION_ATTEMPT_PROGRESS = 'execution.attempt.progress';
 export const EVENT_EXECUTION_ATTEMPT_HEARTBEAT = 'execution.attempt.heartbeat';
 export const EVENT_EXECUTION_ATTEMPT_FALLBACK = 'execution.attempt.fallback';
+export const EVENT_EXECUTION_BUDGET_EXCEEDED = 'execution.budget.exceeded';
 
-export interface ExecutionPolicy { retryMax: number; retryBackoffMs: number; fallbackRuntime: string | null; }
+export interface ExecutionPolicy { retryMax: number; retryBackoffMs: number; fallbackRuntime: string | null; costBudget?: number | null; }
 export interface RetryPlan { runtime: string; delayMs: number; fallbackOfAttemptId: string | null; }
+export interface UsageTotals { inputTokens: number; outputTokens: number; totalTokens: number; costEstimate: number; costActual: number; }
 
 export class ProcessSupervisor {
   constructor(
@@ -85,6 +87,16 @@ export class ProcessSupervisor {
       return { runtime: this.policy.fallbackRuntime, delayMs: this.policy.retryBackoffMs, fallbackOfAttemptId: failedAttempt.id };
     }
     return null;
+  }
+  totals(sessionId: string): UsageTotals {
+    return this.attempts.listBySession(sessionId).reduce<UsageTotals>((sum, attempt) => ({ inputTokens: sum.inputTokens + (attempt.inputTokens ?? 0), outputTokens: sum.outputTokens + (attempt.outputTokens ?? 0), totalTokens: sum.totalTokens + (attempt.totalTokens ?? 0), costEstimate: sum.costEstimate + (attempt.costEstimate ?? 0), costActual: sum.costActual + (attempt.costActual ?? 0) }), { inputTokens: 0, outputTokens: 0, totalTokens: 0, costEstimate: 0, costActual: 0 });
+  }
+  exceedsBudget(sessionId: string, pendingCost: number | null | undefined): boolean {
+    if (this.policy.costBudget === null || this.policy.costBudget === undefined) return false;
+    const total = this.totals(sessionId).costActual + (pendingCost ?? 0);
+    if (total <= this.policy.costBudget) return false;
+    this.events.log(EVENT_EXECUTION_BUDGET_EXCEEDED, { category: 'TECHNICAL', sessionId, payload: { budget: this.policy.costBudget, costActual: total } });
+    return true;
   }
 
   async finalizeLatestAttempt(sessionId: string, input: UpdateExecutionAttemptInput): Promise<ExecutionAttempt> {

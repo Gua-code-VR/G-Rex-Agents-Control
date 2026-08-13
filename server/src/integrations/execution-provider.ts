@@ -27,7 +27,9 @@ export interface ExecutionResult {
   reason: string | null;
   errorClass?: string | null;
   metadata?: Record<string, unknown>;
+  usage?: ExecutionUsage;
 }
+export interface ExecutionUsage { inputTokens?: number | null; outputTokens?: number | null; totalTokens?: number | null; costEstimate?: number | null; costActual?: number | null; }
 
 export interface ExecutionHandle {
   processReference: string;
@@ -107,6 +109,7 @@ abstract class LocalCliProvider implements ExecutionProvider {
           reason: cancelled ? `Processo terminato (${signal})` : code === 0 ? null : output.join('').slice(-4000) || `Exit code ${code}`,
           errorClass: code === 0 ? null : /econn|timeout|network/i.test(output.join('')) ? 'CONNECTIVITY_ERROR' : 'AGENT_ERROR',
           metadata: { signal, output: output.join('').slice(-4000) },
+          usage: normalizedUsage(output.join('')),
         });
       });
     });
@@ -119,6 +122,22 @@ abstract class LocalCliProvider implements ExecutionProvider {
   }
   async touchHeartbeat(_processReference: string): Promise<void> { /* activity is persisted by the Control Plane */ }
 }
+
+function normalizedUsage(output: string): ExecutionUsage | undefined {
+  for (const line of output.split(/\r?\n/).reverse()) {
+    try {
+      const value = JSON.parse(line) as Record<string, any>;
+      const usage = value.usage ?? value.metrics?.usage;
+      if (!usage) continue;
+      const input = numberOrNull(usage.input_tokens ?? usage.inputTokens);
+      const outputTokens = numberOrNull(usage.output_tokens ?? usage.outputTokens);
+      const total = numberOrNull(usage.total_tokens ?? usage.totalTokens) ?? ((input ?? 0) + (outputTokens ?? 0));
+      return { inputTokens: input, outputTokens, totalTokens: total, costEstimate: numberOrNull(usage.cost_estimate ?? usage.costEstimate), costActual: numberOrNull(usage.cost ?? usage.cost_actual ?? usage.costActual) };
+    } catch { /* not JSON */ }
+  }
+  return undefined;
+}
+function numberOrNull(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) ? value : null; }
 
 export class ClineProvider extends LocalCliProvider {
   readonly descriptor = { id: 'cline', runtimeType: 'cli', runtimeName: 'Cline', providerName: 'Cline', defaultModel: null };

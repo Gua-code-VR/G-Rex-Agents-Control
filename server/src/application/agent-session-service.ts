@@ -241,6 +241,7 @@ export class AgentSessionService {
       status: 'COMPLETED',
       exitCode: runtimeResult?.exitCode ?? 0,
       reason: runtimeResult?.reason ?? 'Sessione completata con successo',
+      inputTokens: runtimeResult?.usage?.inputTokens ?? null, outputTokens: runtimeResult?.usage?.outputTokens ?? null, totalTokens: runtimeResult?.usage?.totalTokens ?? null, costEstimate: runtimeResult?.usage?.costEstimate ?? null, costActual: runtimeResult?.usage?.costActual ?? null,
       metadata: { finalEvent: 'session.complete', runtime: runtimeResult?.metadata ?? null },
     });
     this.objectives.conclude(objectiveId, report, gitEnd);
@@ -341,6 +342,7 @@ export class AgentSessionService {
       exitCode: runtimeResult?.exitCode ?? null,
       reason: detail,
       errorClass: runtimeResult?.errorClass ?? 'USER_REPORTED',
+      inputTokens: runtimeResult?.usage?.inputTokens ?? null, outputTokens: runtimeResult?.usage?.outputTokens ?? null, totalTokens: runtimeResult?.usage?.totalTokens ?? null, costEstimate: runtimeResult?.usage?.costEstimate ?? null, costActual: runtimeResult?.usage?.costActual ?? null,
       metadata: { finalEvent: 'session.fail', runtime: runtimeResult?.metadata ?? null },
     });
     this.objectives.setStatus(objectiveId, 'ERRORE');
@@ -392,6 +394,10 @@ export class AgentSessionService {
     const session = this.sessions.getById(sessionId);
     if (!session || session.status !== 'ATTIVA') return; // a human transition already won the race
     if (result.outcome === 'COMPLETED') {
+      if (this.supervisor.exceedsBudget(sessionId, result.usage?.costActual ?? result.usage?.costEstimate)) {
+        await this.fail(objectiveId, { error: 'Budget di esecuzione superato' }, { ...result, outcome: 'FAILED', errorClass: 'AGENT_CONTROL_ERROR' });
+        return;
+      }
       await this.complete(objectiveId, { report: result.reason ?? `Completato da ${session.agentType}` }, result);
       return;
     }
@@ -399,6 +405,7 @@ export class AgentSessionService {
       const failed = await this.supervisor.finalizeLatestAttempt(sessionId, {
         endedAt: new Date().toISOString(), status: 'FAILED', exitCode: result.exitCode,
         reason: result.reason, errorClass: result.errorClass ?? 'AGENT_ERROR', metadata: result.metadata ?? null,
+        inputTokens: result.usage?.inputTokens ?? null, outputTokens: result.usage?.outputTokens ?? null, totalTokens: result.usage?.totalTokens ?? null, costEstimate: result.usage?.costEstimate ?? null, costActual: result.usage?.costActual ?? null,
       });
       const plan = this.supervisor.retryPlan(sessionId, session.agentType, failed);
       if (plan) {

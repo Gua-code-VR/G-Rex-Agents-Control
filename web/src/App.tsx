@@ -235,7 +235,7 @@ function ObjectiveCard({
               </div>
               {session.processReference && <code className="muted small session-ref">{session.processReference}</code>}
               {session.exitReason && <p className="muted small session-exit">{session.exitReason}</p>}
-              {(attemptsBySession[session.id] ?? []).map((attempt) => <p className="muted small" key={attempt.id}>Tentativo #{attempt.attemptIndex}: <strong>{attempt.status}</strong> · {attempt.runtimeName ?? 'runtime'} / {attempt.providerName ?? 'provider'}{attempt.modelName ? ` (${attempt.modelName})` : ''}{attempt.durationMs !== null ? ` · ${attempt.durationMs}ms` : ''}{attempt.exitCode !== null ? ` · exit ${attempt.exitCode}` : ''}{attempt.reason ? ` — ${attempt.reason}` : ''}</p>)}
+              {(attemptsBySession[session.id] ?? []).map((attempt) => <p className="muted small" key={attempt.id}>Tentativo #{attempt.attemptIndex}: <strong>{attempt.status}</strong> · {attempt.runtimeName ?? 'runtime'} / {attempt.providerName ?? 'provider'}{attempt.totalTokens !== null ? ` · ${attempt.totalTokens} token` : ''}{attempt.costActual !== null ? ` · €${attempt.costActual.toFixed(4)}` : attempt.costEstimate !== null ? ` · stim. €${attempt.costEstimate.toFixed(4)}` : ''}{attempt.reason ? ` — ${attempt.reason}` : ''}</p>)}
               {startable && (
                 <button type="button" className="btn touch-target" disabled={busy}
                   onClick={() => onStart(objective.id, session.id)}>

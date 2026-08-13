@@ -15,7 +15,7 @@ import type { DatabaseSync } from 'node:sqlite';
  *   (USER/TECHNICAL/AGENT per §11 separazione log).
  * La migrazione è idempotente: DDL IF NOT EXISTS + ALTER TABLE colonne mancanti.
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -142,6 +142,11 @@ CREATE TABLE IF NOT EXISTS execution_attempts (
   reason TEXT,
   error_class TEXT,
   fallback_of_attempt_id TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  total_tokens INTEGER,
+  cost_estimate REAL,
+  cost_actual REAL,
   metadata TEXT
 );
 
@@ -191,6 +196,11 @@ export function applySchema(db: DatabaseSync): void {
   ensureColumn(db, 'sessions', 'last_heartbeat_at', 'last_heartbeat_at TEXT');
   ensureColumn(db, 'events', 'category', "category TEXT NOT NULL DEFAULT 'TECHNICAL'");
   ensureColumn(db, 'execution_attempts', 'fallback_of_attempt_id', 'fallback_of_attempt_id TEXT');
+  ensureColumn(db, 'execution_attempts', 'input_tokens', 'input_tokens INTEGER');
+  ensureColumn(db, 'execution_attempts', 'output_tokens', 'output_tokens INTEGER');
+  ensureColumn(db, 'execution_attempts', 'total_tokens', 'total_tokens INTEGER');
+  ensureColumn(db, 'execution_attempts', 'cost_estimate', 'cost_estimate REAL');
+  ensureColumn(db, 'execution_attempts', 'cost_actual', 'cost_actual REAL');
   // Migrazione v7: tabella notifications per M8.
   // Tabella già creata nel DDL, ma serve per vecchi DB.
   // (DDL IF NOT EXISTS la crea se manca)
