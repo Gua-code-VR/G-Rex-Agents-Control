@@ -48,7 +48,10 @@ export interface Project {
   gitStatus: GitStatus | null;
   createdAt: string;
   updatedAt: string;
+  policy: BudgetPolicy | null;
 }
+export interface BudgetPolicy { costBudget: number | null; warningPercent: number; action: 'WARN' | 'HARD_STOP' | 'REQUIRE_APPROVAL'; }
+export interface GovernanceDashboard { policy: BudgetPolicy; totals: { totalTokens: number; costActual: number; costEstimate: number }; budget: { used: number; remaining: number | null }; breakdown: Array<{ providerName: string; modelName: string; attempts: number; totalTokens: number; cost: number }>; trend: Array<{ date: string; cost: number; totalTokens: number }>; objectives: Array<{ id: string; title: string; policy: BudgetPolicy | null; totals: { totalTokens: number; costActual: number; costEstimate: number } }> }
 
 export interface HealthResponse {
   status: string;
@@ -131,6 +134,7 @@ export interface Objective {
   gitEnd: GitStatus | null;
   createdAt: string;
   updatedAt: string;
+  policy: BudgetPolicy | null;
 }
 
 export interface AgentSession {
@@ -284,6 +288,10 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     }),
+  getProjectGovernance: (id: string) => request<{ governance: GovernanceDashboard }>(`/api/projects/${id}/governance`),
+  setProjectPolicy: (id: string, policy: BudgetPolicy) => request<{ policy: BudgetPolicy }>(`/api/projects/${id}/policy`, { method: 'PUT', body: JSON.stringify(policy) }),
+  setObjectivePolicy: (id: string, policy: BudgetPolicy) => request<{ policy: BudgetPolicy }>(`/api/objectives/${id}/policy`, { method: 'PUT', body: JSON.stringify(policy) }),
+  grantBudgetException: (id: string, note?: string, expiresAt?: string) => request<{ exception: { id: string; expiresAt: string | null } }>(`/api/objectives/${id}/governance/exceptions`, { method: 'POST', body: JSON.stringify({ note, expiresAt }) }),
   refreshProjectGitStatus: (id: string) =>
     request<{ project: Project }>(`/api/projects/${id}/git-status`, {
       method: 'POST',

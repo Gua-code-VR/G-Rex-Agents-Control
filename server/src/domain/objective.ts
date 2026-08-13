@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { GitStatus, ProjectStatus } from './project.js';
+import type { BudgetPolicy } from './governance.js';
 
 /**
  * Stati di un Objective (§5 e §12-M3).
@@ -102,6 +103,7 @@ export interface Objective {
   gitEnd: GitStatus | null;
   createdAt: string;
   updatedAt: string;
+  policy: BudgetPolicy | null;
 }
 
 /** AgentSession (§5): sessione agente legata a un Objective. */

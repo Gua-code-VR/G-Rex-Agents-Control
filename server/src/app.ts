@@ -28,6 +28,7 @@ import { NotificationService } from './application/notification-service.js';
 import { SqliteNotificationRepository } from './infrastructure/db/notification-repo.js';
 import { BackupService } from './application/backup-service.js';
 import { StaleSessionDetector, StartupRecoveryService } from './application/stale-detector.js';
+import { GovernanceService } from './application/governance-service.js';
 
 export interface AppServices {
   db: DatabaseSync;
@@ -43,6 +44,7 @@ export interface AppServices {
   backups: BackupService;
   staleDetector: StaleSessionDetector;
   startupRecovery: StartupRecoveryService;
+  governance: GovernanceService;
 }
 
 export interface BuiltApp {
@@ -77,6 +79,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const decisionRepository = new SqliteDecisionRepository(db);
   const attemptsRepository = new SqliteExecutionAttemptRepository(db);
   const supervisor = new ProcessSupervisor(attemptsRepository, events, { retryMax: config.executionRetryMax, retryBackoffMs: config.executionRetryBackoffMs, fallbackRuntime: config.executionFallbackRuntime, costBudget: config.executionCostBudget });
+  const governance = new GovernanceService(db, events, notifications, config.executionCostBudget);
   const decisions = new DecisionService(
     decisionRepository,
     checkpointRepository,
@@ -114,6 +117,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     checkpoints,
     supervisor,
     notifications,
+    governance,
   );
 
   // M7: autenticazione
@@ -175,6 +179,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     providers,
     attempts: attemptsRepository,
     supervisor,
+    governance,
   });
 
   return {
@@ -193,6 +198,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
       backups,
       staleDetector,
       startupRecovery,
+      governance,
     },
   };
 }

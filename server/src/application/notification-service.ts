@@ -17,6 +17,7 @@ export const NOTIFICATION_TYPES = [
   'AGENT_RESTART_EXHAUSTED',
   'SYSTEM_STARTUP_RECOVERY',
   'HEARTBEAT_MISSING',
+  'BUDGET_POLICY',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

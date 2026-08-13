@@ -15,6 +15,7 @@ import type { Project } from '../domain/project.js';
 import type { CheckpointService } from './checkpoint-service.js';
 import type { NotificationService } from './notification-service.js';
 import { classifyError } from './error-classifier.js';
+import type { GovernanceService } from './governance-service.js';
 
 export const EVENT_SESSION_STARTED = 'session.started';
 export const EVENT_SESSION_STOPPED = 'session.stopped';
@@ -73,6 +74,7 @@ export class AgentSessionService {
     private readonly checkpoints: CheckpointService,
     private readonly supervisor: ProcessSupervisor,
     private readonly notifications?: NotificationService,
+    private readonly governance?: GovernanceService,
   ) {}
 
   /** Avvia la sessione (IN_AVVIO → ATTIVA) e porta obiettivo e progetto IN_LAVORAZIONE. */
@@ -394,7 +396,11 @@ export class AgentSessionService {
     const session = this.sessions.getById(sessionId);
     if (!session || session.status !== 'ATTIVA') return; // a human transition already won the race
     if (result.outcome === 'COMPLETED') {
-      if (this.supervisor.exceedsBudget(sessionId, result.usage?.costActual ?? result.usage?.costEstimate)) {
+      const current = this.supervisor.totals(sessionId).costActual;
+      const pending = result.usage?.costActual ?? result.usage?.costEstimate ?? 0;
+      const governance = this.governance?.evaluate(objectiveId, current + pending);
+      if (governance) this.governance?.recordDecision(objectiveId, governance.decision, current + pending);
+      if (governance?.decision === 'HARD_STOP' || (!governance && this.supervisor.exceedsBudget(sessionId, pending))) {
         await this.fail(objectiveId, { error: 'Budget di esecuzione superato' }, { ...result, outcome: 'FAILED', errorClass: 'AGENT_CONTROL_ERROR' });
         return;
       }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { BudgetPolicy } from './governance.js';
 
 /**
  * Stati operativi definiti nella sorgente di verità (§4).
@@ -81,6 +82,7 @@ export interface Project {
   gitStatus: GitStatus | null;
   createdAt: string;
   updatedAt: string;
+  policy: BudgetPolicy | null;
 }
 
 export interface CreateProjectInput {

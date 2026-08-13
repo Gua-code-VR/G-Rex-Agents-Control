@@ -28,6 +28,7 @@ import type { BackupService } from '../application/backup-service.js';
 import type { ExecutionProviderRegistry } from '../integrations/execution-provider.js';
 import type { ExecutionAttemptRepository } from '../infrastructure/db/execution-attempt-repo.js';
 import type { ProcessSupervisor } from '../application/process-supervisor.js';
+import type { GovernanceService } from '../application/governance-service.js';
 
 export interface ApiDeps {
   projects: ProjectService;
@@ -43,6 +44,7 @@ export interface ApiDeps {
   providers: ExecutionProviderRegistry;
   attempts: ExecutionAttemptRepository;
   supervisor: ProcessSupervisor;
+  governance: GovernanceService;
 }
 
 /** API REST di M4 (Web App/API, §7): registro progetti, obiettivi, sessioni
@@ -101,6 +103,17 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       return reply.code(404).send({ message: 'Progetto non trovato' });
     }
     return { project };
+  });
+
+  app.get('/api/projects/:id/governance', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!deps.projects.getById(id)) return reply.code(404).send({ message: 'Progetto non trovato' });
+    return { governance: deps.governance.dashboard(id) };
+  });
+
+  app.put('/api/projects/:id/policy', async (req, reply) => {
+    try { const policy = deps.governance.setPolicy('PROJECT', (req.params as { id: string }).id, req.body); return policy ? { policy } : reply.code(404).send({ message: 'Progetto non trovato' }); }
+    catch (err) { if (err instanceof ZodError) return reply.code(400).send({ message: 'Policy non valida', issues: err.issues }); throw err; }
   });
 
   app.post('/api/projects', async (req, reply) => {
@@ -210,6 +223,16 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     }
     // M4: il dettaglio espone anche i checkpoint dell'obiettivo.
     return { ...detail, checkpoints: deps.checkpoints.listByObjective(id) };
+  });
+
+  app.put('/api/objectives/:id/policy', async (req, reply) => {
+    try { const policy = deps.governance.setPolicy('OBJECTIVE', (req.params as { id: string }).id, req.body); return policy ? { policy } : reply.code(404).send({ message: 'Obiettivo non trovato' }); }
+    catch (err) { if (err instanceof ZodError) return reply.code(400).send({ message: 'Policy non valida', issues: err.issues }); throw err; }
+  });
+
+  app.post('/api/objectives/:id/governance/exceptions', async (req, reply) => {
+    try { const exception = deps.governance.grantException((req.params as { id: string }).id, (req.body ?? {}) as { note?: string; expiresAt?: string | null }); return exception ? reply.code(201).send({ exception }) : reply.code(404).send({ message: 'Obiettivo non trovato' }); }
+    catch (err) { return reply.code(400).send({ message: err instanceof Error ? err.message : 'Eccezione non valida' }); }
   });
 
   app.get('/api/objectives/:id/checkpoints', async (req, reply) => {

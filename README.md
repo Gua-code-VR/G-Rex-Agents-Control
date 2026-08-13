@@ -176,6 +176,17 @@ d'ambiente opzionali:
 | `GAC_EXECUTION_RETRY_BACKOFF_MS` | `1000` | Backoff lineare tra retry e fallback |
 | `GAC_EXECUTION_FALLBACK_RUNTIME` | — | Runtime alternativo dopo l’esaurimento dei retry |
 | `GAC_EXECUTION_COST_BUDGET` | — | Budget massimo globale di costo per attempt (governance/alert) |
+
+### M12 — policy e governance per progetto/obiettivo
+
+Le policy di costo sono persistite per progetto o, come override, per obiettivo.
+Il contratto è provider-agnostic: gli adapter normalizzano usage e costo, mentre il
+Control Plane valuta solo `costBudget`, soglia di warning e azione (`WARN`,
+`HARD_STOP`, `REQUIRE_APPROVAL`). Le eccezioni autorizzate sono persistite e
+auditabili. Il pannello progetto mostra budget usato/residuo, breakdown
+provider/modello e trend giornaliero. API: `GET /api/projects/:id/governance`,
+`PUT /api/projects/:id/policy`, `PUT /api/objectives/:id/policy` e
+`POST /api/objectives/:id/governance/exceptions`.
 | `GAC_HEARTBEAT_INTERVAL_MS` | `30000` | Intervallo massimo senza heartbeat prima di dichiarare una sessione stale |
 | `GAC_STALE_CHECK_INTERVAL_MS` | `30000` | Frequenza del controllo automatico delle sessioni stale |
 

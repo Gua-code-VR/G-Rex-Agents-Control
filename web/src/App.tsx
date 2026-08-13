@@ -16,6 +16,7 @@ import {
   type Checkpoint,
   type Notification,
   type ExecutionProvider,
+  type GovernanceDashboard,
 } from './api/client';
 import { CheckpointList } from './components/CheckpointList';
 import { LoginPage } from './components/LoginPage';
@@ -103,6 +104,27 @@ function GitStatusBox({
   );
 }
 
+function GovernanceCard({ project }: { project: Project }) {
+  const [data, setData] = useState<GovernanceDashboard | null>(null);
+  const [budget, setBudget] = useState(project.policy?.costBudget?.toString() ?? '');
+  const [warning, setWarning] = useState((project.policy?.warningPercent ?? 80).toString());
+  const [action, setAction] = useState(project.policy?.action ?? 'WARN');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => { try { setData((await api.getProjectGovernance(project.id)).governance); } catch { setData(null); } }, [project.id]);
+  useEffect(() => { void load(); }, [load]);
+  const save = async () => { setBusy(true); try { await api.setProjectPolicy(project.id, { costBudget: budget.trim() ? Number(budget) : null, warningPercent: Number(warning), action }); await load(); } finally { setBusy(false); } };
+  return <section className="governance-box">
+    <div className="git-box-head"><h4>Governance costi</h4><button type="button" className="btn btn-ghost" onClick={() => void load()}>Aggiorna</button></div>
+    {data ? <><p className="muted small">Usato € {data.budget.used.toFixed(4)} · Residuo {data.budget.remaining === null ? 'illimitato' : `€ ${data.budget.remaining.toFixed(4)}`} · {data.totals.totalTokens} token</p>
+      <p className="muted small">Provider/modelli: {data.breakdown.length ? data.breakdown.map((b) => `${b.providerName}/${b.modelName}: € ${Number(b.cost).toFixed(4)}`).join(' · ') : 'nessun attempt'}</p>
+      {data.trend.length > 0 && <p className="muted small">Trend: {data.trend.map((t) => `${t.date} € ${Number(t.cost).toFixed(4)}`).join(' · ')}</p>}
+    </> : <p className="muted small">Caricamento dati governance…</p>}
+    <div className="status-row"><input aria-label="Budget progetto" type="number" min="0" step="0.001" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget € (vuoto = nessun limite)" /><input aria-label="Soglia warning" type="number" min="1" max="100" value={warning} onChange={(e) => setWarning(e.target.value)} placeholder="Soglia %" />
+      <select aria-label="Azione budget" value={action} onChange={(e) => setAction(e.target.value as 'WARN' | 'HARD_STOP' | 'REQUIRE_APPROVAL')}><option value="WARN">Avviso</option><option value="HARD_STOP">Hard stop</option><option value="REQUIRE_APPROVAL">Approvazione umana</option></select>
+      <button type="button" className="btn" disabled={busy} onClick={() => void save()}>{busy ? 'Salvo…' : 'Salva policy'}</button></div>
+  </section>;
+}
+
 // ── ProjectCard ───────────────────────────────────────────────────────
 
 function ProjectCard({
@@ -135,6 +157,7 @@ function ProjectCard({
         </p>
       )}
       <GitStatusBox git={project.gitStatus} projectId={project.id} onRefresh={onRefreshGit} busy={gitBusy} />
+      <GovernanceCard project={project} />
       <div className="status-control">
         <label className="status-label">Stato operativo</label>
         <div className="status-row">
@@ -177,6 +200,11 @@ function ObjectiveCard({
   const [blockReason, setBlockReason] = useState('');
   const [failDetail, setFailDetail] = useState('');
   const [report, setReport] = useState('');
+  const [policyBudget, setPolicyBudget] = useState(objective.policy?.costBudget?.toString() ?? '');
+  const [policyWarning, setPolicyWarning] = useState((objective.policy?.warningPercent ?? 80).toString());
+  const [policyAction, setPolicyAction] = useState(objective.policy?.action ?? 'WARN');
+  const [policyBusy, setPolicyBusy] = useState(false);
+  const savePolicy = async () => { setPolicyBusy(true); try { await api.setObjectivePolicy(objective.id, { costBudget: policyBudget.trim() ? Number(policyBudget) : null, warningPercent: Number(policyWarning), action: policyAction }); } finally { setPolicyBusy(false); } };
   const hasOpenSession = sessions.some(
     (s) => OPEN_OBJECTIVE_STATUSES.includes(objective.status) && (s.status === 'IN_AVVIO' || s.status === 'ATTIVA'),
   );
@@ -191,6 +219,7 @@ function ObjectiveCard({
         </span>
       </header>
       <p className="objective">{objective.objectiveText}</p>
+      <details className="governance-box"><summary>Policy budget obiettivo {objective.policy ? '(override attivo)' : '(eredita progetto)'}</summary><div className="status-row"><input type="number" min="0" step="0.001" value={policyBudget} onChange={(e) => setPolicyBudget(e.target.value)} placeholder="Budget €" /><input type="number" min="1" max="100" value={policyWarning} onChange={(e) => setPolicyWarning(e.target.value)} placeholder="Soglia %" /><select value={policyAction} onChange={(e) => setPolicyAction(e.target.value as 'WARN' | 'HARD_STOP' | 'REQUIRE_APPROVAL')}><option value="WARN">Avviso</option><option value="HARD_STOP">Hard stop</option><option value="REQUIRE_APPROVAL">Approvazione umana</option></select><button type="button" className="btn" disabled={policyBusy} onClick={() => void savePolicy()}>{policyBusy ? 'Salvo…' : 'Salva override'}</button></div></details>
       {objective.invariants && (
         <div className="objective-section">
           <span className="objective-label">Invarianti</span>

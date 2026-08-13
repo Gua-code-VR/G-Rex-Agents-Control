@@ -15,7 +15,7 @@ import type { DatabaseSync } from 'node:sqlite';
  *   (USER/TECHNICAL/AGENT per §11 separazione log).
  * La migrazione è idempotente: DDL IF NOT EXISTS + ALTER TABLE colonne mancanti.
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS projects (
   git_snapshot TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+  ,policy_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS objectives (
   git_end TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+  ,policy_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_objectives_project_id ON objectives (project_id);
@@ -152,6 +154,12 @@ CREATE TABLE IF NOT EXISTS execution_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_execution_attempts_session_id ON execution_attempts (session_id);
 
+CREATE TABLE IF NOT EXISTS governance_exceptions (
+  id TEXT PRIMARY KEY, objective_id TEXT NOT NULL, note TEXT, expires_at TEXT,
+  created_at TEXT NOT NULL, revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_governance_exceptions_objective ON governance_exceptions (objective_id);
+
 CREATE INDEX IF NOT EXISTS idx_checkpoints_objective_id ON checkpoints (objective_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_status ON checkpoints (status);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_created_at ON checkpoints (created_at);
@@ -201,6 +209,8 @@ export function applySchema(db: DatabaseSync): void {
   ensureColumn(db, 'execution_attempts', 'total_tokens', 'total_tokens INTEGER');
   ensureColumn(db, 'execution_attempts', 'cost_estimate', 'cost_estimate REAL');
   ensureColumn(db, 'execution_attempts', 'cost_actual', 'cost_actual REAL');
+  ensureColumn(db, 'projects', 'policy_json', 'policy_json TEXT');
+  ensureColumn(db, 'objectives', 'policy_json', 'policy_json TEXT');
   // Migrazione v7: tabella notifications per M8.
   // Tabella già creata nel DDL, ma serve per vecchi DB.
   // (DDL IF NOT EXISTS la crea se manca)

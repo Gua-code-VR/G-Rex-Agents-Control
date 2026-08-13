@@ -8,6 +8,7 @@ import type {
   ObjectiveStatus,
   SessionStatus,
 } from '../../domain/objective.js';
+import { budgetPolicySchema, type BudgetPolicy } from '../../domain/governance.js';
 
 interface ObjectiveRow {
   id: string;
@@ -25,7 +26,9 @@ interface ObjectiveRow {
   git_end: string | null;
   created_at: string;
   updated_at: string;
+  policy_json: string | null;
 }
+function parsePolicy(raw: string | null): BudgetPolicy | null { try { return raw ? budgetPolicySchema.parse(JSON.parse(raw)) : null; } catch { return null; } }
 
 /** Decodifica una lista JSON persistita (invariants/criteria); mai null. */
 function parseJsonList(raw: string | null): string[] {
@@ -65,6 +68,7 @@ function toObjective(row: ObjectiveRow): Objective {
     gitEnd: parseGitSnapshot(row.git_end),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    policy: parsePolicy(row.policy_json),
   };
 }
 

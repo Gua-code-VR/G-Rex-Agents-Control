@@ -7,6 +7,7 @@ import type {
   ProjectStatus,
   UpdateProjectInput,
 } from '../../domain/project.js';
+import { budgetPolicySchema, type BudgetPolicy } from '../../domain/governance.js';
 import { projectStatusGroup } from '../../domain/project.js';
 
 interface ProjectRow {
@@ -19,7 +20,9 @@ interface ProjectRow {
   git_snapshot: string | null;
   created_at: string;
   updated_at: string;
+  policy_json: string | null;
 }
+function parsePolicy(raw: string | null): BudgetPolicy | null { try { return raw ? budgetPolicySchema.parse(JSON.parse(raw)) : null; } catch { return null; } }
 
 function parseGitSnapshot(raw: string | null): GitStatus | null {
   if (!raw) return null;
@@ -43,6 +46,7 @@ export function toProject(row: ProjectRow): Project {
     gitStatus: parseGitSnapshot(row.git_snapshot),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    policy: parsePolicy(row.policy_json),
   };
 }
 
@@ -104,6 +108,7 @@ export class SqliteProjectRepository implements ProjectRepository {
       gitStatus: null,
       createdAt: now,
       updatedAt: now,
+      policy: null,
     };
     this.insertStmt.run({
       id: project.id,
