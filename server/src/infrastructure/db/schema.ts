@@ -43,7 +43,6 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_project_id ON events (project_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events (type);
-CREATE INDEX IF NOT EXISTS idx_events_category ON events (category);
 
 CREATE TABLE IF NOT EXISTS app_meta (
   key TEXT PRIMARY KEY,
@@ -211,6 +210,7 @@ export function applySchema(db: DatabaseSync): void {
   ensureColumn(db, 'sessions', 'heartbeat_interval_ms', 'heartbeat_interval_ms INTEGER');
   ensureColumn(db, 'sessions', 'last_heartbeat_at', 'last_heartbeat_at TEXT');
   ensureColumn(db, 'events', 'category', "category TEXT NOT NULL DEFAULT 'TECHNICAL'");
+  db.exec('CREATE INDEX IF NOT EXISTS idx_events_category ON events (category)');
   ensureColumn(db, 'execution_attempts', 'fallback_of_attempt_id', 'fallback_of_attempt_id TEXT');
   ensureColumn(db, 'execution_attempts', 'input_tokens', 'input_tokens INTEGER');
   ensureColumn(db, 'execution_attempts', 'output_tokens', 'output_tokens INTEGER');
