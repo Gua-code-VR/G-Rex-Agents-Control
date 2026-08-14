@@ -284,7 +284,8 @@ function ObjectiveCard({
               </div>
               {session.processReference && <code className="muted small session-ref">{session.processReference}</code>}
               {session.exitReason && <p className="muted small session-exit">{session.exitReason}</p>}
-              {(attemptsBySession[session.id] ?? []).map((attempt) => <p className="muted small" key={attempt.id}>Tentativo #{attempt.attemptIndex}: <strong>{attempt.status}</strong> · {attempt.runtimeName ?? 'runtime'} / {attempt.providerName ?? 'provider'}{attempt.totalTokens !== null ? ` · ${attempt.totalTokens} token` : ''}{attempt.costActual !== null ? ` · €${attempt.costActual.toFixed(4)}` : attempt.costEstimate !== null ? ` · stim. €${attempt.costEstimate.toFixed(4)}` : ''}{attempt.reason ? ` — ${attempt.reason}` : ''}</p>)}
+              {session.executionSelection?.decision && <p className="muted small"><strong>{session.executionSelection.decision.mode === 'AUTOMATIC' ? 'Selezione automatica' : 'Selezione esplicita'}:</strong> {session.executionSelection.decision.reason}</p>}
+              {(attemptsBySession[session.id] ?? []).map((attempt) => <p className="muted small" key={attempt.id}>Tentativo #{attempt.attemptIndex}: <strong>{attempt.status}</strong> · {attempt.runtimeName ?? 'runtime'} / {attempt.providerName ?? 'provider'} / {attempt.modelName ?? 'modello runtime'}{attempt.totalTokens !== null ? ` · ${attempt.totalTokens} token` : ''}{attempt.costActual !== null ? ` · €${attempt.costActual.toFixed(4)}` : attempt.costEstimate !== null ? ` · stim. €${attempt.costEstimate.toFixed(4)}` : ''}{attempt.reason ? ` — ${attempt.reason}` : ''}</p>)}
               {startable && (
                 <button type="button" className="btn touch-target" disabled={busy}
                   onClick={() => onStart(objective.id, session.id)}>
@@ -370,10 +371,17 @@ function ObjectivesSection({
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [stopCondition, setStopCondition] = useState('');
   const [runtime, setRuntime] = useState('');
+  const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
+  const [providerId, setProviderId] = useState('');
+  const [modelId, setModelId] = useState('');
+  const [outputTokenLimit, setOutputTokenLimit] = useState('');
   const [estimatedCost, setEstimatedCost] = useState('');
   const [catalogEstimate, setCatalogEstimate] = useState<import('./api/client').PreflightEstimate | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const selected = projects.find((p) => p.id === selectedProjectId) ?? null;
+  const selectedCatalog = catalog.find((entry) => entry.runtime.id === runtime) ?? null;
+  useEffect(() => { void api.getProviderCatalog().then((result) => setCatalog(result.catalog)).catch(() => undefined); }, []);
+  useEffect(() => { if (!selectedCatalog) { setProviderId(''); setModelId(''); return; } setProviderId(selectedCatalog.provider.id); setModelId(selectedCatalog.runtime.defaultModel ?? selectedCatalog.models[0]?.id ?? ''); }, [selectedCatalog]);
   const objectives = selected ? objectivesByProject[selected.id] ?? [] : [];
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -386,6 +394,9 @@ function ObjectivesSection({
       ...(acceptanceCriteria.trim() ? { acceptanceCriteria: splitLines(acceptanceCriteria) } : {}),
       ...(stopCondition.trim() ? { stopCondition: stopCondition.trim() } : {}),
       ...(runtime ? { runtime } : {}),
+      ...(providerId ? { providerId } : {}),
+      ...(modelId ? { modelId } : {}),
+      ...(outputTokenLimit ? { outputTokenLimit: Number(outputTokenLimit) } : {}),
       ...(estimatedCost.trim() ? { estimatedCost: Number(estimatedCost) } : {}),
     }).then(() => { setTitle(''); setObjectiveText(''); setInvariants(''); setAcceptanceCriteria(''); setStopCondition(''); setEstimatedCost(''); });
   };
@@ -405,7 +416,13 @@ function ObjectivesSection({
           <h3>Nuovo obiettivo per {selected.name}</h3>
           <label className="field">Titolo * <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Titolo breve" maxLength={200} disabled={creating} /></label>
           <label className="field">Obiettivo * <textarea value={objectiveText} onChange={(e) => setObjectiveText(e.target.value)} rows={3} maxLength={5000} placeholder="Descrizione dettagliata" disabled={creating} /></label>
-          <label className="field">Runtime <select value={runtime} onChange={(e) => setRuntime(e.target.value)} disabled={creating}><option value="">Predefinito</option>{providers.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.runtimeName}{provider.configured ? '' : ' (non disponibile)'}</option>)}</select></label>
+          <div className="runtime-selection">
+            <label className="field">Runtime <select value={runtime} onChange={(e) => setRuntime(e.target.value)} disabled={creating}><option value="">Automatico (consigliato)</option>{providers.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.runtimeName}{provider.configured ? '' : ' (non disponibile)'}</option>)}</select></label>
+            <label className="field">Provider <input value={providerId || 'Seleziona un runtime'} readOnly disabled /></label>
+            <label className="field">Modello <select value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={creating || !selectedCatalog || selectedCatalog.models.length === 0}><option value="">{selectedCatalog?.models.length ? 'Seleziona modello' : 'Gestito dal runtime'}</option>{selectedCatalog?.models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
+            <label className="field">Output max <input type="number" min="1" max={selectedCatalog?.models.find((model) => model.id === modelId)?.limits.defaultOutputTokens || undefined} value={outputTokenLimit} onChange={(e) => setOutputTokenLimit(e.target.value)} placeholder="Limite catalogo" disabled={creating || !modelId} /></label>
+          </div>
+          {selectedCatalog && <p className="muted small">{selectedCatalog.runtime.available ? `Compatibile e disponibile · ${selectedCatalog.provider.name}` : 'Combinazione non utilizzabile: runtime non disponibile'}</p>}
           <label className="field">Stima costo affidabile (€) <input type="number" min="0" step="0.001" value={estimatedCost} onChange={(e) => setEstimatedCost(e.target.value)} placeholder="Opzionale: abilita enforcement preventivo" disabled={creating} /></label>
           <button type="button" className="btn btn-ghost" disabled={!runtime || !objectiveText.trim()} onClick={() => void api.estimateProviderCost(runtime, objectiveText, stopCondition || null).then((result) => { setCatalogEstimate(result.estimate); if (result.estimate.cost !== null) setEstimatedCost(String(result.estimate.cost)); })}>Calcola stima catalogo</button>
           {catalogEstimate && <p className="muted small">{catalogEstimate.reason}: {catalogEstimate.cost === null ? 'costo non disponibile' : `€ ${catalogEstimate.cost.toFixed(6)}`} · {catalogEstimate.inputTokens}+{catalogEstimate.outputTokens} token · {catalogEstimate.modelId ?? 'modello runtime'}</p>}

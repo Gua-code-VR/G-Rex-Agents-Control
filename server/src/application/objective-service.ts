@@ -1,4 +1,5 @@
-import type { ExecutionProviderRegistry } from '../integrations/execution-provider.js';
+import type { ProviderCatalogService } from './provider-catalog-service.js';
+import type { RuntimeSelectionService } from './runtime-selection-service.js';
 import type { AgentSession, CreateObjectiveInput, Objective } from '../domain/objective.js';
 import { createObjectiveSchema } from '../domain/objective.js';
 import type { EventService } from './event-service.js';
@@ -38,7 +39,8 @@ export class ObjectiveService {
     private readonly projects: ProjectService,
     private readonly gitStatus: GitStatusService,
     private readonly events: EventService,
-    private readonly providers: ExecutionProviderRegistry,
+    private readonly catalog: ProviderCatalogService,
+    private readonly runtimeSelector: RuntimeSelectionService,
     private readonly defaultRuntime: string,
     private readonly heartbeatIntervalMs = 30_000,
   ) {}
@@ -62,10 +64,21 @@ export class ObjectiveService {
       );
     }
 
-    const runtime = parsed.runtime ?? this.defaultRuntime;
-    try { this.providers.require(runtime); } catch (error) {
-      throw new ObjectiveStateError(error instanceof Error ? error.message : 'Runtime non disponibile');
+    let selection;
+    try {
+      if (parsed.runtime) {
+        selection = this.catalog.resolve({ runtimeId: parsed.runtime, providerId: parsed.providerId, modelId: parsed.modelId, outputTokenLimit: parsed.outputTokenLimit });
+        selection.decision = {
+          mode: 'EXPLICIT', reason: `Scelta esplicita validata: ${selection.runtimeId}/${selection.providerId}/${selection.modelId ?? 'modello-runtime'}`,
+          selectedScore: null, requiredCapabilities: [],
+          budget: { policy: { costBudget: null, warningPercent: 80, action: 'WARN' }, spent: 0, remaining: null },
+          candidates: [], decidedAt: new Date().toISOString(),
+        };
+      } else {
+        selection = this.runtimeSelector.select({ projectId, objectiveText: parsed.objectiveText, stopCondition: parsed.stopCondition, defaultRuntime: this.defaultRuntime });
+      }
     }
+    catch (error) { throw new ObjectiveStateError(error instanceof Error ? error.message : 'Selezione runtime non valida'); }
     const objective = this.objectives.create(projectId, parsed);
     // Evidenza di inizio lavoro (§6-SYSTEM): snapshot Git non distruttivo.
     const gitStart = await this.gitStatus.readSnapshot(projectId);
@@ -73,7 +86,7 @@ export class ObjectiveService {
       this.objectives.setGitStart(objective.id, gitStart);
     }
 
-    const session = this.sessions.createWithHeartbeat(objective.id, runtime, this.heartbeatIntervalMs);
+    const session = this.sessions.createWithHeartbeat(objective.id, selection.runtimeId, this.heartbeatIntervalMs, selection);
 
     this.projects.setCurrentObjective(projectId, objective.id, objective.title);
     this.projects.setStatus(projectId, { status: 'IN_AVVIO' });
@@ -85,6 +98,7 @@ export class ObjectiveService {
       payload: {
         title: objective.title,
         agentType: session.agentType,
+        selection,
         status: objective.status,
       },
     });

@@ -100,8 +100,12 @@ export class AgentSessionService {
     if (preflight?.decision === 'REQUIRE_APPROVAL') throw new SessionStateError(`Approvazione budget richiesta (${preflight.approval?.id ?? 'in attesa'})`);
 
     const project = this.projects.getById(objective.projectId);
+    let selection;
+    try { selection = this.catalog?.resolve(session.executionSelection ?? { runtimeId: session.agentType }); }
+    catch (error) { throw new SessionStateError(error instanceof Error ? error.message : 'Selezione runtime non utilizzabile'); }
+    if (!selection) throw new SessionStateError('Catalogo runtime non disponibile');
     let provider;
-    try { provider = this.providers.require(session.agentType); } catch (error) {
+    try { provider = this.providers.require(selection.runtimeId); } catch (error) {
       throw new SessionStateError(error instanceof Error ? error.message : 'Runtime non disponibile');
     }
     let executionAttempt: import('../domain/execution-attempt.js').ExecutionAttempt | null = null;
@@ -110,6 +114,7 @@ export class AgentSessionService {
       projectPath: project?.repositoryPath ?? null,
       objectiveText: objective.objectiveText,
       stopCondition: objective.stopCondition,
+      model: selection.modelId,
       heartbeatIntervalMs: Math.max(100, Math.floor(session.heartbeatIntervalMs / 2)),
       onEvent: (event) => {
         if (!executionAttempt) return;
@@ -127,9 +132,9 @@ export class AgentSessionService {
       runtimeType: handle.descriptor.runtimeType,
       runtimeName: handle.descriptor.runtimeName,
       providerName: handle.descriptor.providerName,
-      modelName: handle.descriptor.defaultModel,
+      modelName: selection.modelId,
       processReference: handle.processReference,
-      metadata: { source: 'agent-session.start', runtimeId: handle.descriptor.id },
+      metadata: { source: 'agent-session.start', selection, selectionReason: selection.decision?.reason ?? 'Selezione validata dal catalogo M14' },
     });
     executionAttempt = attempt;
 
@@ -141,7 +146,7 @@ export class AgentSessionService {
       objectiveId,
       sessionId,
       payload: {
-        agentType: handle.descriptor.id,
+        agentType: handle.descriptor.id, selection,
         sessionRef: handle.processReference,
         executionAttemptId: attempt.id,
       },
@@ -436,21 +441,28 @@ export class AgentSessionService {
   private async startRetryAttempt(objectiveId: string, sessionId: string, runtime: string, fallbackOfAttemptId: string | null): Promise<void> {
     const objective = this.objectives.getById(objectiveId)!;
     const project = this.projects.getById(objective.projectId);
-    const provider = this.providers.require(runtime);
+    const session = this.sessions.getById(sessionId)!;
+    const original = session.executionSelection;
+    let selection;
+    try { selection = this.catalog?.resolve(runtime === original?.runtimeId ? original : { runtimeId: runtime }); }
+    catch (error) { throw new SessionStateError(error instanceof Error ? error.message : 'Fallback non utilizzabile'); }
+    if (!selection) throw new SessionStateError('Catalogo runtime non disponibile');
+    const provider = this.providers.require(selection.runtimeId);
     let attempt: import('../domain/execution-attempt.js').ExecutionAttempt | null = null;
-    const handle = await provider.start({ objectiveId, projectPath: project?.repositoryPath ?? null, objectiveText: objective.objectiveText, stopCondition: objective.stopCondition,
-      heartbeatIntervalMs: Math.max(100, Math.floor(this.sessions.getById(sessionId)!.heartbeatIntervalMs / 2)),
+    const handle = await provider.start({ objectiveId, projectPath: project?.repositoryPath ?? null, objectiveText: objective.objectiveText, stopCondition: objective.stopCondition, model: selection.modelId,
+      heartbeatIntervalMs: Math.max(100, Math.floor(session.heartbeatIntervalMs / 2)),
       onEvent: (event) => {
         if (!attempt) return;
         this.supervisor.recordProgress(attempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });
         if (event.type === 'heartbeat') { this.sessions.touchHeartbeat(sessionId); this.sessions.touchActivity(sessionId); }
       },
     });
-    this.sessions.setProcessReference(sessionId, handle.processReference, runtime);
+    this.sessions.setExecutionSelection(sessionId, selection);
+    this.sessions.setProcessReference(sessionId, handle.processReference, selection.runtimeId);
     attempt = await this.supervisor.startAttempt(this.sessions.getById(sessionId)!, {
       runtimeType: handle.descriptor.runtimeType, runtimeName: handle.descriptor.runtimeName, providerName: handle.descriptor.providerName,
-      modelName: handle.descriptor.defaultModel, processReference: handle.processReference, fallbackOfAttemptId,
-      metadata: { source: 'process-supervisor.retry', runtimeId: runtime, backoffApplied: true },
+      modelName: selection.modelId, processReference: handle.processReference, fallbackOfAttemptId,
+      metadata: { source: 'process-supervisor.retry', selection, selectionReason: fallbackOfAttemptId ? 'Fallback validato dal catalogo M14' : 'Retry della selezione validata', backoffApplied: true },
     });
     void handle.completion.then((result) => this.applyRuntimeResult(objectiveId, sessionId, result)).catch(() => undefined);
   }

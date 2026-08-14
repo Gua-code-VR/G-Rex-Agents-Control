@@ -7,6 +7,7 @@ import type {
   Objective,
   ObjectiveStatus,
   SessionStatus,
+  ExecutionSelection,
 } from '../../domain/objective.js';
 import { budgetPolicySchema, type BudgetPolicy } from '../../domain/governance.js';
 
@@ -87,6 +88,7 @@ function toSession(row: SessionRow): AgentSession {
     exitReason: row.exit_reason,
     heartbeatIntervalMs: row.heartbeat_interval_ms ?? 30000,
     lastHeartbeatAt: row.last_heartbeat_at,
+    executionSelection: parseSelection(row.selection_json),
   };
 }
 
@@ -110,7 +112,8 @@ export interface ObjectiveRepository {
 
 export interface SessionRepository {
   create(objectiveId: string, agentType: string): AgentSession;
-  createWithHeartbeat(objectiveId: string, agentType: string, heartbeatIntervalMs: number): AgentSession;
+  createWithHeartbeat(objectiveId: string, agentType: string, heartbeatIntervalMs: number, selection?: ExecutionSelection | null): AgentSession;
+  setExecutionSelection(id: string, selection: ExecutionSelection): AgentSession | null;
   getById(id: string): AgentSession | null;
   listByObjective(objectiveId: string): AgentSession[];
   /** M8: Lista tutte le sessioni (per recovery all'avvio). */
@@ -136,7 +139,9 @@ interface SessionRow {
   exit_reason: string | null;
   heartbeat_interval_ms: number | null;
   last_heartbeat_at: string | null;
+  selection_json: string | null;
 }
+function parseSelection(raw: string | null): ExecutionSelection | null { try { const value = raw ? JSON.parse(raw) as ExecutionSelection : null; return value?.runtimeId && value.providerId ? value : null; } catch { return null; } }
 
 /** Repository SQLite per l'entità Objective (§5). */
 export class SqliteObjectiveRepository implements ObjectiveRepository {
@@ -266,6 +271,7 @@ create(projectId: string, input: CreateObjectiveInput): Objective {
 export class SqliteSessionRepository implements SessionRepository {
   private readonly insertStmt: StatementSync;
   private readonly insertWithHeartbeatStmt: StatementSync;
+  private readonly setSelectionStmt: StatementSync;
   private readonly getStmt: StatementSync;
   private readonly listByObjStmt: StatementSync;
   private readonly listAllStmt: StatementSync;
@@ -285,10 +291,11 @@ export class SqliteSessionRepository implements SessionRepository {
     );
     this.insertWithHeartbeatStmt = db.prepare(
       `INSERT INTO sessions
-         (id, objective_id, agent_type, started_at, status, heartbeat_interval_ms, last_heartbeat_at)
+         (id, objective_id, agent_type, started_at, status, heartbeat_interval_ms, last_heartbeat_at, selection_json)
        VALUES
-         (:id, :objectiveId, :agentType, :startedAt, :status, :heartbeatIntervalMs, :lastHeartbeatAt)`,
+         (:id, :objectiveId, :agentType, :startedAt, :status, :heartbeatIntervalMs, :lastHeartbeatAt, :selectionJson)`,
     );
+    this.setSelectionStmt = db.prepare('UPDATE sessions SET selection_json = ?, agent_type = ? WHERE id = ?');
     this.getStmt = db.prepare('SELECT * FROM sessions WHERE id = ?');
     this.listByObjStmt = db.prepare(
       'SELECT * FROM sessions WHERE objective_id = ? ORDER BY started_at ASC',
@@ -326,7 +333,7 @@ export class SqliteSessionRepository implements SessionRepository {
     return this.getById(id)!;
   }
 
-  createWithHeartbeat(objectiveId: string, agentType: string, heartbeatIntervalMs: number): AgentSession {
+  createWithHeartbeat(objectiveId: string, agentType: string, heartbeatIntervalMs: number, selection: ExecutionSelection | null = null): AgentSession {
     const now = new Date().toISOString();
     const id = randomUUID();
     this.insertWithHeartbeatStmt.run({
@@ -337,9 +344,11 @@ export class SqliteSessionRepository implements SessionRepository {
       status: 'IN_AVVIO',
       heartbeatIntervalMs,
       lastHeartbeatAt: now,
+      selectionJson: selection ? JSON.stringify(selection) : null,
     });
     return this.getById(id)!;
   }
+  setExecutionSelection(id: string, selection: ExecutionSelection): AgentSession | null { this.setSelectionStmt.run(JSON.stringify(selection), selection.runtimeId, id); return this.getById(id); }
 
   getById(id: string): AgentSession | null {
     const row = this.getStmt.get(id) as SessionRow | undefined;

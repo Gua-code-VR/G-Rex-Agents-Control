@@ -152,6 +152,10 @@ export interface AgentSession {
   exitReason: string | null;
   heartbeatIntervalMs: number;
   lastHeartbeatAt: string | null;
+  executionSelection: null | {
+    runtimeId: string; providerId: string; modelId: string | null; outputTokenLimit: number | null;
+    decision?: { mode: 'AUTOMATIC' | 'EXPLICIT'; reason: string };
+  };
 }
 
 export interface Notification {
@@ -207,6 +211,9 @@ export interface CreateObjectiveInput {
   acceptanceCriteria?: string[];
   stopCondition?: string | null;
   runtime?: string;
+  providerId?: string;
+  modelId?: string | null;
+  outputTokenLimit?: number | null;
   estimatedCost?: number | null;
 }
 

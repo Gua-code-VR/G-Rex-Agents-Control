@@ -30,6 +30,7 @@ import { BackupService } from './application/backup-service.js';
 import { StaleSessionDetector, StartupRecoveryService } from './application/stale-detector.js';
 import { GovernanceService } from './application/governance-service.js';
 import { ProviderCatalogService } from './application/provider-catalog-service.js';
+import { RuntimeSelectionService } from './application/runtime-selection-service.js';
 
 export interface AppServices {
   db: DatabaseSync;
@@ -47,6 +48,7 @@ export interface AppServices {
   startupRecovery: StartupRecoveryService;
   governance: GovernanceService;
   catalog: ProviderCatalogService;
+  runtimeSelector: RuntimeSelectionService;
 }
 
 export interface BuiltApp {
@@ -92,13 +94,15 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   );
   const providers = buildProviderRegistry(config);
   const catalog = new ProviderCatalogService(providers);
+  const runtimeSelector = new RuntimeSelectionService(catalog, db);
   const objectives = new ObjectiveService(
     objectiveRepository,
     sessionRepository,
     projects,
     gitStatus,
     events,
-    providers,
+    catalog,
+    runtimeSelector,
     config.defaultRuntime,
     config.heartbeatIntervalMs,
   );
@@ -205,6 +209,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
       startupRecovery,
       governance,
       catalog,
+      runtimeSelector,
     },
   };
 }

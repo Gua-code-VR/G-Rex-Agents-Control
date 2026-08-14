@@ -210,6 +210,16 @@ Il pannello consente di consultare il catalogo e calcolare la stima prima di
 creare l’obiettivo. API: `GET /api/provider-catalog` e
 `POST /api/provider-catalog/estimate`. Per Codex, configurare facoltativamente
 `GAC_CODEX_INPUT_PRICE_PER_MILLION` e `GAC_CODEX_OUTPUT_PRICE_PER_MILLION`.
+
+### M15 — selezione esplicita runtime/provider/modello
+
+Ogni sessione conserva una selezione normalizzata di runtime, provider, modello
+e limite output. Il catalogo M14 la valida per compatibilità, disponibilità e
+limiti prima dell'avvio iniziale, dei retry e del fallback; la combinazione
+effettiva e la motivazione della scelta sono persistite nei metadati di ogni
+`ExecutionAttempt` ed esposte dallo storico API/UI. Se il runtime non viene
+indicato, M16 applica il routing automatico governato; il fallback resta una
+policy configurata e validata.
 | `GAC_HEARTBEAT_INTERVAL_MS` | `30000` | Intervallo massimo senza heartbeat prima di dichiarare una sessione stale |
 | `GAC_STALE_CHECK_INTERVAL_MS` | `30000` | Frequenza del controllo automatico delle sessioni stale |
 

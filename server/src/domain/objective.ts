@@ -122,6 +122,32 @@ export interface AgentSession {
   heartbeatIntervalMs: number;
   /** M8: Timestamp dell'ultimo heartbeat ricevuto. */
   lastHeartbeatAt: string | null;
+  executionSelection: ExecutionSelection | null;
+}
+
+/** Combinazione normalizzata, provider-agnostic, scelta per l'esecuzione. */
+export interface ExecutionSelection {
+  runtimeId: string;
+  providerId: string;
+  modelId: string | null;
+  outputTokenLimit: number | null;
+  decision?: ExecutionRoutingDecision;
+}
+
+export interface ExecutionRoutingCandidate {
+  runtimeId: string; providerId: string; modelId: string | null; outputTokenLimit: number | null;
+  eligible: boolean; score: number; reliability: number; estimatedCost: number | null;
+  budgetFit: boolean; capabilities: string[]; reasons: string[];
+}
+
+export interface ExecutionRoutingDecision {
+  mode: 'AUTOMATIC' | 'EXPLICIT';
+  reason: string;
+  selectedScore: number | null;
+  requiredCapabilities: string[];
+  budget: { policy: BudgetPolicy; spent: number; remaining: number | null };
+  candidates: ExecutionRoutingCandidate[];
+  decidedAt: string;
 }
 
 export interface CreateObjectiveInput {
@@ -131,6 +157,9 @@ export interface CreateObjectiveInput {
   acceptanceCriteria: string[];
   stopCondition: string | null;
   runtime?: string;
+  providerId?: string;
+  modelId?: string | null;
+  outputTokenLimit?: number | null;
   estimatedCost?: number | null;
 }
 
@@ -149,6 +178,9 @@ export const createObjectiveSchema = z.object({
     .min(1, "Il testo dell'obiettivo è obbligatorio")
     .max(8000, "Il testo dell'obiettivo è troppo lungo (massimo 8000 caratteri)"),
   runtime: z.string().trim().min(1).max(80).optional(),
+  providerId: z.string().trim().min(1).max(120).optional(),
+  modelId: z.string().trim().min(1).max(160).nullable().optional(),
+  outputTokenLimit: z.number().int().positive().max(1_000_000).nullable().optional(),
   estimatedCost: z.number().finite().positive().nullable().optional(),
   invariants: stringList,
   acceptanceCriteria: stringList,

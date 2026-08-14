@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   process_reference TEXT,
   exit_reason TEXT,
   heartbeat_interval_ms INTEGER,
-  last_heartbeat_at TEXT
+  last_heartbeat_at TEXT,
+  selection_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_objective_id ON sessions (objective_id);
@@ -209,6 +210,7 @@ export function applySchema(db: DatabaseSync): void {
   // Migrazione v6 → v7: M8 heartbeat, last_heartbeat_at su sessioni; category su eventi.
   ensureColumn(db, 'sessions', 'heartbeat_interval_ms', 'heartbeat_interval_ms INTEGER');
   ensureColumn(db, 'sessions', 'last_heartbeat_at', 'last_heartbeat_at TEXT');
+  ensureColumn(db, 'sessions', 'selection_json', 'selection_json TEXT');
   ensureColumn(db, 'events', 'category', "category TEXT NOT NULL DEFAULT 'TECHNICAL'");
   db.exec('CREATE INDEX IF NOT EXISTS idx_events_category ON events (category)');
   ensureColumn(db, 'execution_attempts', 'fallback_of_attempt_id', 'fallback_of_attempt_id TEXT');

@@ -213,7 +213,7 @@ export class ClineProvider extends LocalCliProvider {
   async start(params: StartExecutionParams): Promise<ExecutionHandle> {
     return this.launch(['--headless', '--json'], params, JSON.stringify({ objectiveText: params.objectiveText, stopCondition: params.stopCondition ?? null }));
   }
-  catalog(): ProviderCatalogEntry { return { runtime: { id: 'cline', name: 'Cline', type: 'cli', available: this.isConfigured(), defaultModel: null, capabilities: ['workspace-edit', 'streaming'], version: null }, provider: { id: 'cline', name: 'Cline' }, models: [] }; }
+  catalog(): ProviderCatalogEntry { return { runtime: { id: 'cline', name: 'Cline', type: 'cli', available: this.isConfigured(), defaultModel: null, capabilities: ['code', 'tool-use', 'workspace-edit', 'streaming'], version: null }, provider: { id: 'cline', name: 'Cline' }, models: [] }; }
 }
 
 /** Codex CLI 0.147 protocol: `codex exec --json [--model] --cd <dir> <prompt>`. */
