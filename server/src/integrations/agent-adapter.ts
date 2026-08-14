@@ -48,6 +48,7 @@ export interface SessionHandle {
  * da un percorso hardcoded.
  */
 import { spawn } from 'node:child_process';
+import { getCliLaunch, isCliCommandAvailable } from './execution-provider.js';
 
 export class ClineAdapter implements AgentAdapter {
   readonly agentType = 'cline';
@@ -62,14 +63,7 @@ export class ClineAdapter implements AgentAdapter {
   }
 
   isConfigured(): boolean {
-    if (!this.enabled) return false;
-    try {
-      const where = process.platform === 'win32' ? 'where' : 'which';
-      const res = require('child_process').spawnSync(where, [this.clineCommand], { encoding: 'utf8' });
-      return Boolean(res && res.status === 0 && res.stdout && res.stdout.trim().length > 0);
-    } catch (err) {
-      return false;
-    }
+    return this.enabled && isCliCommandAvailable(this.clineCommand);
   }
 
   async startSession(params: StartSessionParams): Promise<SessionHandle> {
@@ -84,7 +78,11 @@ export class ClineAdapter implements AgentAdapter {
     const opts: any = {};
     if (params.projectPath) opts.cwd = params.projectPath;
 
-    const child = spawn(this.clineCommand, args, { stdio: ['pipe', 'pipe', 'pipe'], ...opts });
+    const launch = getCliLaunch(this.clineCommand);
+    if (!launch) {
+      return { sessionRef: `cline-fallback-${Date.now()}`, agentType: this.agentType };
+    }
+    const child = spawn(launch.command, [...launch.prefixArgs, ...args], { stdio: ['pipe', 'pipe', 'pipe'], ...opts });
     const sessionRef = `cline:${child.pid}:${Date.now()}`;
     this.processes.set(sessionRef, child);
 

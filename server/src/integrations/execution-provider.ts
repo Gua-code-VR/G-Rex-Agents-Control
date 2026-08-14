@@ -1,4 +1,60 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+
+export interface CliLaunch { command: string; prefixArgs: string[]; }
+
+const cliLaunchCache = new Map<string, CliLaunch | null>();
+const cliAvailabilityCache = new Map<string, boolean>();
+
+export function getCliLaunch(command: string): CliLaunch | null {
+  const cacheKey = `${process.platform}\0${command}`;
+  if (cliLaunchCache.has(cacheKey)) return cliLaunchCache.get(cacheKey) ?? null;
+  if (process.platform !== 'win32') {
+    const launch = { command, prefixArgs: [] };
+    cliLaunchCache.set(cacheKey, launch);
+    return launch;
+  }
+  const resolved = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    '$command = Get-Command -Name $env:G_REX_RUNTIME_CLI_COMMAND -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -eq $command) { exit 1 }; Write-Output ($command.CommandType.ToString() + [char]9 + $command.Source); exit 0',
+  ], {
+    encoding: 'utf8',
+    windowsHide: true,
+    env: { ...process.env, G_REX_RUNTIME_CLI_COMMAND: command },
+  });
+  if (resolved.status !== 0 || !resolved.stdout) {
+    cliLaunchCache.set(cacheKey, null);
+    return null;
+  }
+  const [commandType, source] = resolved.stdout.trim().split('\t', 2);
+  if (!source) {
+    cliLaunchCache.set(cacheKey, null);
+    return null;
+  }
+  if (commandType === 'ExternalScript' && source.toLowerCase().endsWith('.ps1')) {
+    const launch = { command: 'powershell.exe', prefixArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', source] };
+    cliLaunchCache.set(cacheKey, launch);
+    return launch;
+  }
+  const launch = commandType === 'Application' ? { command: source, prefixArgs: [] } : null;
+  cliLaunchCache.set(cacheKey, launch);
+  return launch;
+}
+
+export function isCliCommandAvailable(command: string): boolean {
+  const cacheKey = `${process.platform}\0${command}`;
+  if (cliAvailabilityCache.has(cacheKey)) return cliAvailabilityCache.get(cacheKey) ?? false;
+  try {
+    const launch = getCliLaunch(command);
+    const available = launch !== null && spawnSync(launch.command, [...launch.prefixArgs, '--version'], {
+      encoding: 'utf8', windowsHide: true,
+    }).status === 0;
+    cliAvailabilityCache.set(cacheKey, available);
+    return available;
+  } catch {
+    cliAvailabilityCache.set(cacheKey, false);
+    return false;
+  }
+}
 
 export type ExecutionOutcome = 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
@@ -75,17 +131,13 @@ abstract class LocalCliProvider implements ExecutionProvider {
   constructor(protected readonly command: string, protected readonly enabled = true) {}
 
   isConfigured(): boolean {
-    if (!this.enabled) return false;
-    try {
-      const where = process.platform === 'win32' ? 'where' : 'which';
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const result = require('child_process').spawnSync(where, [this.command], { encoding: 'utf8' });
-      return result?.status === 0 && Boolean(result.stdout?.trim());
-    } catch { return false; }
+    return this.enabled && isCliCommandAvailable(this.command);
   }
 
   protected launch(args: string[], params: StartExecutionParams, stdin?: string): ExecutionHandle {
-    const child = spawn(this.command, args, { cwd: params.projectPath ?? undefined, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    const launch = getCliLaunch(this.command);
+    if (!launch) throw new Error(`Runtime CLI non avviabile: ${this.command}`);
+    const child = spawn(launch.command, [...launch.prefixArgs, ...args], { cwd: params.projectPath ?? undefined, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     const processReference = `${this.descriptor.id}:${child.pid ?? 'pending'}:${Date.now()}`;
     this.processes.set(processReference, child);
     if (stdin !== undefined) { child.stdin?.write(stdin); child.stdin?.end(); }

@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('child_process', () => {
   const EventEmitter = require('events');
   const mod: any = {};
-  mod.spawnSync = vi.fn(() => ({ status: 0, stdout: '/usr/bin/cline\n' }));
+  mod.spawnSync = vi.fn(() => ({ status: 0, stdout: 'Application\t/usr/bin/cline\n' }));
   mod.spawn = vi.fn((_cmd: string, _args: string[], _opts: any) => {
     const stdout = new EventEmitter();
     stdout.setEncoding = () => {};
