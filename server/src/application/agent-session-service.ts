@@ -110,6 +110,7 @@ export class AgentSessionService {
       projectPath: project?.repositoryPath ?? null,
       objectiveText: objective.objectiveText,
       stopCondition: objective.stopCondition,
+      heartbeatIntervalMs: Math.max(100, Math.floor(session.heartbeatIntervalMs / 2)),
       onEvent: (event) => {
         if (!executionAttempt) return;
         this.supervisor.recordProgress(executionAttempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });
@@ -438,7 +439,12 @@ export class AgentSessionService {
     const provider = this.providers.require(runtime);
     let attempt: import('../domain/execution-attempt.js').ExecutionAttempt | null = null;
     const handle = await provider.start({ objectiveId, projectPath: project?.repositoryPath ?? null, objectiveText: objective.objectiveText, stopCondition: objective.stopCondition,
-      onEvent: (event) => { if (attempt) this.supervisor.recordProgress(attempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null }); },
+      heartbeatIntervalMs: Math.max(100, Math.floor(this.sessions.getById(sessionId)!.heartbeatIntervalMs / 2)),
+      onEvent: (event) => {
+        if (!attempt) return;
+        this.supervisor.recordProgress(attempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });
+        if (event.type === 'heartbeat') { this.sessions.touchHeartbeat(sessionId); this.sessions.touchActivity(sessionId); }
+      },
     });
     this.sessions.setProcessReference(sessionId, handle.processReference, runtime);
     attempt = await this.supervisor.startAttempt(this.sessions.getById(sessionId)!, {

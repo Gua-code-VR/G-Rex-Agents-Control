@@ -73,6 +73,7 @@ export interface StartExecutionParams {
   objectiveText: string;
   stopCondition: string | null;
   model?: string | null;
+  heartbeatIntervalMs?: number;
   onEvent?: (event: ExecutionEvent) => void;
 }
 
@@ -143,6 +144,14 @@ abstract class LocalCliProvider implements ExecutionProvider {
     if (stdin !== undefined) { child.stdin?.write(stdin); child.stdin?.end(); }
     const output: string[] = [];
     child.stdout?.setEncoding('utf8'); child.stderr?.setEncoding('utf8');
+    const heartbeatIntervalMs = Math.max(100, Math.floor(params.heartbeatIntervalMs ?? 10_000));
+    const heartbeatTimer = setInterval(() => {
+      if (child.exitCode === null && !child.killed) {
+        params.onEvent?.({ type: 'heartbeat', metadata: { source: 'process_alive' } });
+      }
+    }, heartbeatIntervalMs);
+    heartbeatTimer.unref();
+    const stopHeartbeat = () => clearInterval(heartbeatTimer);
     child.stdout?.on('data', (chunk: string) => {
       output.push(chunk);
       for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
@@ -154,8 +163,12 @@ abstract class LocalCliProvider implements ExecutionProvider {
     });
     child.stderr?.on('data', (chunk: string) => output.push(chunk));
     const completion = new Promise<ExecutionResult>((resolve) => {
-      child.once('error', (error) => resolve({ outcome: 'FAILED', exitCode: null, reason: error.message, errorClass: 'AGENT_ERROR' }));
+      child.once('error', (error) => {
+        stopHeartbeat();
+        resolve({ outcome: 'FAILED', exitCode: null, reason: error.message, errorClass: 'AGENT_ERROR' });
+      });
       child.once('exit', (code, signal) => {
+        stopHeartbeat();
         this.processes.delete(processReference);
         const cancelled = signal !== null;
         resolve({

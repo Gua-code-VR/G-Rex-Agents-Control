@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { spawn, spawnSync } = vi.hoisted(() => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
 
@@ -11,6 +11,8 @@ vi.mock('node:child_process', async (importOriginal) => ({
 import { ClineProvider, CodexProvider } from '../src/integrations/execution-provider.js';
 
 describe('CLI runtime availability', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
   it('uses the same resolved executable for availability and launch', async () => {
     spawnSync.mockImplementation((command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
       if (command === 'powershell.exe' && args.includes('-Command')) {
@@ -35,5 +37,26 @@ describe('CLI runtime availability', () => {
     expect(new ClineProvider('cline', false).isConfigured()).toBe(false);
     expect(new CodexProvider('codex', false).isConfigured()).toBe(false);
     expect(spawnSync).not.toHaveBeenCalled();
+  });
+
+  it('emits heartbeat while a silent Cline process is still alive', async () => {
+    vi.useFakeTimers();
+    spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'powershell.exe' && args.includes('-Command')) {
+        return { status: 0, stdout: 'Application\tC:\\tools\\cline.exe\n' };
+      }
+      return { status: 0, stdout: 'version\n' };
+    });
+    const child = { pid: 2, stdin: { write: vi.fn(), end: vi.fn() }, stdout: { setEncoding: vi.fn(), on: vi.fn() }, stderr: { setEncoding: vi.fn(), on: vi.fn() }, once: vi.fn(), killed: false, exitCode: null };
+    spawn.mockReturnValue(child);
+    const onEvent = vi.fn();
+
+    await new ClineProvider('cline').start({
+      objectiveId: 'o-silent', projectPath: null, objectiveText: 'long task', stopCondition: null,
+      heartbeatIntervalMs: 1000, onEvent,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(onEvent).toHaveBeenCalledWith({ type: 'heartbeat', metadata: { source: 'process_alive' } });
   });
 });
