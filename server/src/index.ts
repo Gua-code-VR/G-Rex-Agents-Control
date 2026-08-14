@@ -9,6 +9,7 @@ async function main(): Promise<void> {
   const { app, services } = await buildApp(config);
   const recovered = services.startupRecovery.recover();
   services.staleDetector.start();
+  services.retryWorker.start();
 
   await registerStaticSpa(app);
 
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
     app.log.info(`Segnale ${signal} ricevuto: arresto in corso`);
     services.events.log(EVENT_APP_STOPPED, { payload: { pid: process.pid } });
     services.staleDetector.stop();
+    services.retryWorker.stop();
     await app.close();
     services.db.close();
     process.exit(0);

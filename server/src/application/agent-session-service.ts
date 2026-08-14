@@ -17,6 +17,8 @@ import type { NotificationService } from './notification-service.js';
 import { classifyError } from './error-classifier.js';
 import type { GovernanceService } from './governance-service.js';
 import type { ProviderCatalogService } from './provider-catalog-service.js';
+import type { PersistentRetryWorker } from './persistent-retry-worker.js';
+import type { RetryJob } from '../domain/retry-job.js';
 
 export const EVENT_SESSION_STARTED = 'session.started';
 export const EVENT_SESSION_STOPPED = 'session.stopped';
@@ -77,6 +79,7 @@ export class AgentSessionService {
     private readonly notifications?: NotificationService,
     private readonly governance?: GovernanceService,
     private readonly catalog?: ProviderCatalogService,
+    private readonly retryWorker?: PersistentRetryWorker,
   ) {}
 
   /** Avvia la sessione (IN_AVVIO → ATTIVA) e porta obiettivo e progetto IN_LAVORAZIONE. */
@@ -190,6 +193,7 @@ export class AgentSessionService {
     if (session.status !== 'ATTIVA') {
       throw new SessionStateError('La sessione non è attiva');
     }
+    this.retryWorker?.cancelSession(sessionId, "Sessione fermata dall'operatore");
 
     await this.providers.require(session.agentType).stop(session.processReference ?? sessionId, parsed.reason ?? undefined);
     // Evidenza di fine lavoro (§6-SYSTEM): snapshot Git al momento dello stop.
@@ -246,6 +250,7 @@ export class AgentSessionService {
     if (!objective) throw new SessionStateError('Obiettivo non trovato');
     const session = this.currentSession(objectiveId);
     if (!session) throw new SessionStateError('Nessuna sessione attiva da completare');
+    this.retryWorker?.cancelSession(session.id, 'Sessione completata');
 
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
     const report = parsed.report ?? 'Obiettivo completato';
@@ -298,6 +303,7 @@ export class AgentSessionService {
     if (!objective) throw new SessionStateError('Obiettivo non trovato');
     const session = this.currentSession(objectiveId);
     if (!session) throw new SessionStateError('Nessuna sessione attiva da bloccare');
+    this.retryWorker?.cancelSession(session.id, 'Sessione bloccata');
 
     const reason = parsed.reason ?? "Bloccato dall'operatore";
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
@@ -346,6 +352,7 @@ export class AgentSessionService {
     if (!objective) throw new SessionStateError('Obiettivo non trovato');
     const session = this.currentSession(objectiveId);
     if (!session) throw new SessionStateError('Nessuna sessione attiva da segnalare in errore');
+    this.retryWorker?.cancelSession(session.id, 'Sessione terminata in errore');
 
     const detail = parsed.error ?? "Errore segnalato dall'operatore";
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
@@ -427,15 +434,20 @@ export class AgentSessionService {
       });
       const plan = this.supervisor.retryPlan(sessionId, session.agentType, failed);
       if (plan) {
-        await new Promise((resolve) => setTimeout(resolve, plan.delayMs));
-        if (this.sessions.getById(sessionId)?.status !== 'ATTIVA') return;
-        await this.startRetryAttempt(objectiveId, sessionId, plan.runtime, plan.fallbackOfAttemptId);
+        this.retryWorker?.schedule(sessionId, plan.runtime, plan.fallbackOfAttemptId, plan.delayMs);
+        if (!this.retryWorker) await this.startRetryAttempt(objectiveId, sessionId, plan.runtime, plan.fallbackOfAttemptId);
         return;
       }
       await this.fail(objectiveId, { error: result.reason ?? `Errore del runtime ${session.agentType}` }, result);
       return;
     }
     await this.stop(objectiveId, sessionId, { reason: result.reason ?? `Runtime ${session.agentType} interrotto` });
+  }
+
+  async runRetryJob(job: RetryJob): Promise<void> {
+    const session = this.sessions.getById(job.sessionId);
+    if (!session || session.status !== 'ATTIVA') return;
+    await this.startRetryAttempt(session.objectiveId, job.sessionId, job.runtimeId, job.fallbackOfAttemptId);
   }
 
   private async startRetryAttempt(objectiveId: string, sessionId: string, runtime: string, fallbackOfAttemptId: string | null): Promise<void> {

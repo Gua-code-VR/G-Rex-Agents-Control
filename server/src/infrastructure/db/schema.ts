@@ -155,6 +155,19 @@ CREATE TABLE IF NOT EXISTS execution_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_execution_attempts_session_id ON execution_attempts (session_id);
 
+CREATE TABLE IF NOT EXISTS retry_jobs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  runtime_id TEXT NOT NULL,
+  fallback_of_attempt_id TEXT,
+  due_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_retry_jobs_due ON retry_jobs (status, due_at);
+
 CREATE TABLE IF NOT EXISTS governance_exceptions (
   id TEXT PRIMARY KEY, objective_id TEXT NOT NULL, note TEXT, expires_at TEXT,
   created_at TEXT NOT NULL, revoked_at TEXT

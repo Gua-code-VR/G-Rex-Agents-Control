@@ -31,6 +31,8 @@ import { StaleSessionDetector, StartupRecoveryService } from './application/stal
 import { GovernanceService } from './application/governance-service.js';
 import { ProviderCatalogService } from './application/provider-catalog-service.js';
 import { RuntimeSelectionService } from './application/runtime-selection-service.js';
+import { PersistentRetryWorker } from './application/persistent-retry-worker.js';
+import { SqliteRetryJobRepository } from './infrastructure/db/retry-job-repo.js';
 
 export interface AppServices {
   db: DatabaseSync;
@@ -49,6 +51,7 @@ export interface AppServices {
   governance: GovernanceService;
   catalog: ProviderCatalogService;
   runtimeSelector: RuntimeSelectionService;
+  retryWorker: PersistentRetryWorker;
 }
 
 export interface BuiltApp {
@@ -82,6 +85,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const checkpoints = new CheckpointService(checkpointRepository, events);
   const decisionRepository = new SqliteDecisionRepository(db);
   const attemptsRepository = new SqliteExecutionAttemptRepository(db);
+  const retryJobs = new SqliteRetryJobRepository(db);
   const supervisor = new ProcessSupervisor(attemptsRepository, events, { retryMax: config.executionRetryMax, retryBackoffMs: config.executionRetryBackoffMs, fallbackRuntime: config.executionFallbackRuntime, costBudget: config.executionCostBudget });
   const governance = new GovernanceService(db, events, notifications, config.executionCostBudget);
   const decisions = new DecisionService(
@@ -95,6 +99,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const providers = buildProviderRegistry(config);
   const catalog = new ProviderCatalogService(providers);
   const runtimeSelector = new RuntimeSelectionService(catalog, db);
+  const retryWorker = new PersistentRetryWorker(retryJobs, events);
   const objectives = new ObjectiveService(
     objectiveRepository,
     sessionRepository,
@@ -126,7 +131,9 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     notifications,
     governance,
     catalog,
+    retryWorker,
   );
+  retryWorker.setExecutor((job) => agentSessions.runRetryJob(job));
 
   // M7: autenticazione
   const authRepo = new AuthRepository(db);
@@ -210,6 +217,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
       governance,
       catalog,
       runtimeSelector,
+      retryWorker,
     },
   };
 }
