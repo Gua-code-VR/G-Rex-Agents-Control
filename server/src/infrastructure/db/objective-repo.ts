@@ -311,7 +311,7 @@ export class SqliteSessionRepository implements SessionRepository {
     );
     this.findStaleStmt = db.prepare(
       `SELECT * FROM sessions
-       WHERE status IN ('IN_AVVIO', 'ATTIVA', 'BLOCCATA')
+       WHERE status = 'ATTIVA'
          AND last_heartbeat_at IS NOT NULL
          AND (julianday(?) - julianday(last_heartbeat_at)) * 86400000 > heartbeat_interval_ms`,
     );

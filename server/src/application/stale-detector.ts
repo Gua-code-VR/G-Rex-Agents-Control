@@ -77,7 +77,7 @@ export class StartupRecoveryService {
     let staleSessions = 0;
     let interruptedSessions = 0;
     for (const session of this.sessions.listAll()) {
-      if (session.status !== 'ATTIVA' && session.status !== 'IN_AVVIO') continue;
+      if (session.status !== 'ATTIVA') continue;
       const objective = this.objectives.getById(session.objectiveId);
       if (!objective) continue;
       const status = session.status === 'ATTIVA' ? 'STALE' : 'INTERROTTA';
