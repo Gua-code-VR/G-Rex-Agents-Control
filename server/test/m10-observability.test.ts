@@ -39,7 +39,7 @@ describe('M10 - attempt observability', () => {
     const attempt = await (built.services as any).agentSessions['supervisor'].startAttempt(created.session, { runtimeName: 'Fake' });
     await (built.services as any).agentSessions['supervisor'].completeAttempt(attempt.id, { endedAt: new Date().toISOString(), exitCode: 0, inputTokens: 12, outputTokens: 8, totalTokens: 20, costActual: 0.04 });
     const attempts = (await built.app.inject({ method: 'GET', url: `/api/sessions/${created.session.id}/execution-attempts` })).json().attempts;
-    expect(attempts[0]).toMatchObject({ totalTokens: 20, costActual: 0.04 });
+    expect(attempts.find((row: { id: string }) => row.id === attempt.id)).toMatchObject({ totalTokens: 20, costActual: 0.04 });
     expect((built.services as any).agentSessions['supervisor'].totals(created.session.id)).toMatchObject({ totalTokens: 20, costActual: 0.04 });
     expect((built.services as any).agentSessions['supervisor'].exceedsBudget(created.session.id, 0)).toBe(true);
   });

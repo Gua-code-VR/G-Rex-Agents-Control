@@ -27,15 +27,17 @@ export interface CreateCheckpointParams {
   gitEnd: GitStatus | null;
   /** Dichiarazioni dell'agente (§6-AGENT); facoltative. */
   agent: CheckpointAgentInput;
+  /** Dettagli tecnici grezzi (log/errore CLI) per gli esiti di errore. */
+  technicalDetails?: string | null;
   /** Testi predefiniti per l'esito, usati quando l'agente non dichiara nulla. */
   defaults: { summary: string; recommendedAction: string };
 }
 
 /**
- * Costruzione dei Checkpoint M4 (§5/§6/§12-M4): ogni conclusione,
- * richiesta di intervento, blocco o errore diventa un record persistente
- * che richiede una decisione umana (PENDING_DECISION), con evidenze
- * classificate:
+ * Costruzione dei Checkpoint M4 (§5/§6/§12-M4): richiesta di intervento,
+ * blocco o errore terminale diventano un record persistente che richiede
+ * una decisione umana (PENDING_DECISION), con evidenze classificate. Un
+ * completamento riuscito non genera checkpoint (§4.1 V2):
  * - SYSTEM --- verificate da Agent Control (stato sessione, snapshot Git
  *   di inizio/fine, delta Git, exit reason);
  * - AGENT --- dichiarate dall'agente (summary, acceptance status, test,
@@ -69,6 +71,7 @@ export class CheckpointService {
       testsSummary: params.agent.testsSummary ?? 'Non dichiarati',
       warnings: params.agent.warnings ?? [],
       recommendedAction: params.agent.recommendedAction ?? params.defaults.recommendedAction,
+      technicalDetails: params.technicalDetails ?? null,
       fullReportReference:
         params.agent.fullReportReference !== undefined
           ? params.agent.fullReportReference

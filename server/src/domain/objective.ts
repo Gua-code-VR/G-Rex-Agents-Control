@@ -63,9 +63,11 @@ export const ERROR_CLASSES = [
 export type ErrorClass = (typeof ERROR_CLASSES)[number];
 
 /**
- * Lo stato ufficiale del Project deriva dall'Objective corrente (§5):
- * ANNULLATO torna a FERMO (nessun obiettivo attivo), tutto il resto
- * mantiene la stessa semantica degli stati operativi §4.
+ * Lo stato ufficiale del Project deriva dall'Objective corrente (§5).
+ * Il progetto è un contenitore permanente associato al repository: dopo
+ * il completamento o l'annullamento di un obiettivo torna FERMO ed è
+ * subito pronto a ricevere un nuovo obiettivo senza reinserire il
+ * repository. Gli stati operativi restanti mantengono la semantica §4.
  */
 export function objectiveStatusToProjectStatus(status: ObjectiveStatus): ProjectStatus {
   switch (status) {
@@ -78,7 +80,7 @@ export function objectiveStatusToProjectStatus(status: ObjectiveStatus): Project
     case 'BLOCCATO':
       return 'BLOCCATO';
     case 'COMPLETATO':
-      return 'COMPLETATO';
+      return 'FERMO';
     case 'ERRORE':
       return 'ERRORE';
     case 'ANNULLATO':
@@ -123,6 +125,8 @@ export interface AgentSession {
   /** M8: Timestamp dell'ultimo heartbeat ricevuto. */
   lastHeartbeatAt: string | null;
   executionSelection: ExecutionSelection | null;
+  /** §19: workspace Git isolata associata all'esecuzione (worktree + branch). */
+  workspaceId: string | null;
 }
 
 /** Combinazione normalizzata, provider-agnostic, scelta per l'esecuzione. */
@@ -138,6 +142,24 @@ export interface ExecutionRoutingCandidate {
   runtimeId: string; providerId: string; modelId: string | null; outputTokenLimit: number | null;
   eligible: boolean; score: number; reliability: number; estimatedCost: number | null;
   budgetFit: boolean; capabilities: string[]; reasons: string[];
+  performance?: ExecutionPerformanceProfile;
+}
+
+export type ObjectiveRoutingType = 'CODE_CHANGE' | 'BUG_FIX' | 'TESTING' | 'DOCUMENTATION' | 'ANALYSIS' | 'GENERAL';
+
+export interface ExecutionPerformanceProfile {
+  objectiveType: ObjectiveRoutingType;
+  sampleSize: number;
+  globalSampleSize: number;
+  qualityScore: number;
+  successRate: number;
+  retryRate: number;
+  fallbackRate: number;
+  humanInterventionRate: number;
+  averageDurationMs: number | null;
+  averageCost: number | null;
+  costEfficiency: number;
+  adaptiveScore: number;
 }
 
 export interface ExecutionRoutingDecision {
@@ -147,6 +169,8 @@ export interface ExecutionRoutingDecision {
   requiredCapabilities: string[];
   budget: { policy: BudgetPolicy; spent: number; remaining: number | null };
   candidates: ExecutionRoutingCandidate[];
+  objectiveType?: ObjectiveRoutingType;
+  learningVersion?: string;
   decidedAt: string;
 }
 
@@ -176,7 +200,7 @@ export const createObjectiveSchema = z.object({
     .string()
     .trim()
     .min(1, "Il testo dell'obiettivo è obbligatorio")
-    .max(8000, "Il testo dell'obiettivo è troppo lungo (massimo 8000 caratteri)"),
+    .max(50000, "Il testo dell'obiettivo è troppo lungo (massimo 50000 caratteri)"),
   runtime: z.string().trim().min(1).max(80).optional(),
   providerId: z.string().trim().min(1).max(120).optional(),
   modelId: z.string().trim().min(1).max(160).nullable().optional(),

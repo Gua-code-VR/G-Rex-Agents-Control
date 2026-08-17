@@ -102,7 +102,7 @@ export const createProjectInputSchema: z.ZodType<CreateProjectInput> = z.object(
   currentObjective: z
     .string()
     .trim()
-    .max(2000, "L'obiettivo corrente è troppo lungo (massimo 2000 caratteri)")
+    .max(50000, "L'obiettivo iniziale è troppo lungo (massimo 50000 caratteri)")
     .optional()
     .transform((v): string | null => (v ? v : null)),
 });
@@ -126,7 +126,7 @@ export const updateProjectSchema: z.ZodType<UpdateProjectInput> = z
     currentObjective: z
       .string()
       .trim()
-      .max(2000, "L'obiettivo corrente è troppo lungo (massimo 2000 caratteri)")
+      .max(50000, "L'obiettivo iniziale è troppo lungo (massimo 50000 caratteri)")
       .nullable()
       .optional()
       .transform((v): string | null | undefined =>

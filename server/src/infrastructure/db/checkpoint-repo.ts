@@ -22,6 +22,7 @@ interface CheckpointRow {
   tests_summary: string;
   warnings: string;
   recommended_action: string;
+  technical_details: string | null;
   full_report_reference: string | null;
   evidence_sources: string;
   created_at: string;
@@ -62,6 +63,7 @@ function toCheckpoint(row: CheckpointRow): Checkpoint {
     testsSummary: row.tests_summary,
     warnings: parseJsonList(row.warnings),
     recommendedAction: row.recommended_action,
+    technicalDetails: row.technical_details ?? null,
     fullReportReference: row.full_report_reference,
     evidenceSources: parseJsonList(row.evidence_sources) as EvidenceSource[],
     createdAt: row.created_at,
@@ -95,11 +97,11 @@ export class SqliteCheckpointRepository implements CheckpointRepository {
       `INSERT INTO checkpoints
          (id, project_id, objective_id, session_id, outcome, status, summary,
           acceptance_status, evidence_summary, git_delta, tests_summary,
-          warnings, recommended_action, full_report_reference, evidence_sources, created_at)
+          warnings, recommended_action, technical_details, full_report_reference, evidence_sources, created_at)
        VALUES
          (:id, :projectId, :objectiveId, :sessionId, :outcome, :status, :summary,
           :acceptanceStatus, :evidenceSummary, :gitDelta, :testsSummary,
-          :warnings, :recommendedAction, :fullReportReference, :evidenceSources, :createdAt)`,
+          :warnings, :recommendedAction, :technicalDetails, :fullReportReference, :evidenceSources, :createdAt)`,
     );
     this.getStmt = db.prepare('SELECT * FROM checkpoints WHERE id = ?');
     this.listByObjStmt = db.prepare(
@@ -133,6 +135,7 @@ export class SqliteCheckpointRepository implements CheckpointRepository {
       testsSummary: checkpoint.testsSummary,
       warnings: JSON.stringify(checkpoint.warnings),
       recommendedAction: checkpoint.recommendedAction,
+      technicalDetails: checkpoint.technicalDetails,
       fullReportReference: checkpoint.fullReportReference,
       evidenceSources: JSON.stringify(checkpoint.evidenceSources),
       createdAt: checkpoint.createdAt,

@@ -1,447 +1,50 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import {
   api,
   type AgentSession,
   type CreateObjectiveInput,
   type DecisionType,
   type EventRecord,
-  type GitStatus,
   type Objective,
-  type ObjectiveStatus,
   type Project,
-  type ProjectStatus,
-  type ProjectStatusGroup,
   type SessionStatus,
   type StatusResponse,
   type Checkpoint,
   type Notification,
   type ExecutionProvider,
   type GovernanceDashboard,
-  type ProviderCatalogEntry,
 } from './api/client';
-import { CheckpointList } from './components/CheckpointList';
+import { AppShell } from './components/AppShell';
+import { summarizeEventPayload } from './lib/event-summary';
+import { ControlRoom } from './components/ControlRoom';
+import { ExecutionsView } from './components/ExecutionsView';
+import { ObjectiveView } from './components/ObjectiveView';
+import { ProjectView } from './components/ProjectView';
+import { RequiresYouView } from './components/RequiresYouView';
+import { SystemView } from './components/SystemView';
+import { AiCatalogView } from './components/AiCatalogView';
 import { LoginPage } from './components/LoginPage';
-import { MobileNav, type MobileTab } from './components/MobileNav';
+import type { NavSection } from './components/Sidebar';
 import { SettingsPage } from './components/SettingsPage';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
-const STATUS_LABEL: Record<ProjectStatus, string> = {
-  FERMO: 'Fermo', IN_AVVIO: 'In avvio', IN_LAVORAZIONE: 'In lavorazione',
-  RICHIEDE_ATTENZIONE: 'Richiede attenzione', BLOCCATO: 'Bloccato',
-  COMPLETATO: 'Completato', ERRORE: 'Errore',
-};
-const STATUS_OPTIONS: ProjectStatus[] = [
-  'FERMO', 'IN_AVVIO', 'IN_LAVORAZIONE', 'RICHIEDE_ATTENZIONE',
-  'BLOCCATO', 'COMPLETATO', 'ERRORE',
-];
-const OBJECTIVE_STATUS_LABEL: Record<ObjectiveStatus, string> = {
-  IN_AVVIO: 'In avvio', IN_LAVORAZIONE: 'In lavorazione',
-  RICHIEDE_ATTENZIONE: 'Richiede attenzione', BLOCCATO: 'Bloccato',
-  COMPLETATO: 'Completato', ERRORE: 'Errore', ANNULLATO: 'Annullato',
-};
 const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
   IN_AVVIO: 'In avvio', ATTIVA: 'Attiva', COMPLETATA: 'Completata',
   ERRORE: 'Errore', INTERROTTA: 'Interrotta', BLOCCATA: 'Bloccata', STALE: 'Inattiva',
 };
-const OPEN_OBJECTIVE_STATUSES: ObjectiveStatus[] = ['IN_AVVIO', 'IN_LAVORAZIONE'];
-const GROUPS: Array<{ key: ProjectStatusGroup; label: string; hint: string }> = [
-  { key: 'FERMO', label: 'Fermo', hint: 'Nessun obiettivo attivo.' },
-  { key: 'IN_LAVORAZIONE', label: 'In lavorazione', hint: 'Obiettivo in corso o in avvio.' },
-  { key: 'PROBLEMA', label: 'Con problema', hint: 'Richiede attenzione, bloccato o errore.' },
-];
-const GROUP_LABEL: Record<ProjectStatusGroup, string> = {
-  FERMO: 'Fermo', IN_LAVORAZIONE: 'In lavorazione', PROBLEMA: 'Con problema',
-};
 
-function splitLines(value: string): string[] {
-  return value.split('\n').map((l) => l.trim()).filter(Boolean);
-}
-function shortCommit(head: string | null): string {
-  if (!head) return 'nessun commit';
-  return head.length > 12 ? `${head.slice(0, 12)}…` : head;
-}
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('it-IT');
 }
 
-// ── GitStatusBox ──────────────────────────────────────────────────────
-
-function GitStatusBox({
-  git, projectId, onRefresh, busy,
-}: {
-  git: GitStatus | null; projectId: string;
-  onRefresh: (id: string) => void; busy: boolean;
-}) {
-  return (
-    <div className="git-box">
-      <div className="git-box-head">
-        <h4>Stato Git</h4>
-        <button type="button" className="btn btn-ghost" onClick={() => onRefresh(projectId)} disabled={busy}>
-          {busy ? 'Aggiorno…' : 'Aggiorna Git'}
-        </button>
-      </div>
-      {git === null ? (
-        <p className="muted small">Non ancora letto. Premi «Aggiorna Git».</p>
-      ) : git.error ? (
-        <p className="git-error">⚠ {git.error}</p>
-      ) : (
-        <ul className="git-line">
-          <li><span className="chip">{git.branch ?? 'senza ramo'}</span></li>
-          <li><span className="chip chip-dim">{git.head ?? 'nessun commit'}</span></li>
-          <li><span className={`chip ${git.dirty ? 'chip-dirty' : 'chip-clean'}`}>
-            {git.dirty ? 'albero sporco' : 'pulito'}
-          </span></li>
-          {git.ahead !== null && git.behind !== null && (
-            <li className="muted small">↑ {git.ahead} davanti · ↓ {git.behind} dietro</li>
-          )}
-          {git.lastCommit && (
-            <li className="muted small">«{git.lastCommit}»{git.lastCommitAt ? ` · ${formatDate(git.lastCommitAt)}` : ''}</li>
-          )}
-        </ul>
-      )}
-      {git && <p className="muted small">Rilevato: {formatDate(git.fetchedAt)}</p>}
-    </div>
-  );
-}
-
-function GovernanceCard({ project }: { project: Project }) {
-  const [data, setData] = useState<GovernanceDashboard | null>(null);
-  const [approvals, setApprovals] = useState<import('./api/client').GovernanceApproval[]>([]);
-  const [budget, setBudget] = useState(project.policy?.costBudget?.toString() ?? '');
-  const [warning, setWarning] = useState((project.policy?.warningPercent ?? 80).toString());
-  const [action, setAction] = useState(project.policy?.action ?? 'WARN');
-  const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { try { const [governance, all] = await Promise.all([api.getProjectGovernance(project.id), api.listGovernanceApprovals()]); setData(governance.governance); const ids = new Set(governance.governance.objectives.map((o) => o.id)); setApprovals(all.approvals.filter((a) => ids.has(a.objectiveId))); } catch { setData(null); } }, [project.id]);
-  useEffect(() => { void load(); }, [load]);
-  const save = async () => { setBusy(true); try { await api.setProjectPolicy(project.id, { costBudget: budget.trim() ? Number(budget) : null, warningPercent: Number(warning), action }); await load(); } finally { setBusy(false); } };
-  return <section className="governance-box">
-    <div className="git-box-head"><h4>Governance costi</h4><button type="button" className="btn btn-ghost" onClick={() => void load()}>Aggiorna</button></div>
-    {data ? <><p className="muted small">Usato € {data.budget.used.toFixed(4)} · Residuo {data.budget.remaining === null ? 'illimitato' : `€ ${data.budget.remaining.toFixed(4)}`} · {data.totals.totalTokens} token</p>
-      <p className="muted small">Provider/modelli: {data.breakdown.length ? data.breakdown.map((b) => `${b.providerName}/${b.modelName}: € ${Number(b.cost).toFixed(4)}`).join(' · ') : 'nessun attempt'}</p>
-      {data.trend.length > 0 && <p className="muted small">Trend: {data.trend.map((t) => `${t.date} € ${Number(t.cost).toFixed(4)}`).join(' · ')}</p>}
-      {approvals.filter((a) => a.status === 'PENDING').map((a) => <p key={a.id} className="muted small">Approvazione € {a.projectedCost.toFixed(4)}: <button className="btn btn-ghost" onClick={() => void api.decideGovernanceApproval(a.id, true).then(load)}>Approva</button> <button className="btn btn-ghost" onClick={() => void api.decideGovernanceApproval(a.id, false).then(load)}>Rifiuta</button></p>)}
-    </> : <p className="muted small">Caricamento dati governance…</p>}
-    <div className="status-row"><input aria-label="Budget progetto" type="number" min="0" step="0.001" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget € (vuoto = nessun limite)" /><input aria-label="Soglia warning" type="number" min="1" max="100" value={warning} onChange={(e) => setWarning(e.target.value)} placeholder="Soglia %" />
-      <select aria-label="Azione budget" value={action} onChange={(e) => setAction(e.target.value as 'WARN' | 'HARD_STOP' | 'REQUIRE_APPROVAL')}><option value="WARN">Avviso</option><option value="HARD_STOP">Hard stop</option><option value="REQUIRE_APPROVAL">Approvazione umana</option></select>
-      <button type="button" className="btn" disabled={busy} onClick={() => void save()}>{busy ? 'Salvo…' : 'Salva policy'}</button></div>
-  </section>;
-}
+// ── PortfolioGovernance ──────────────────────────────────────────────
 
 function PortfolioGovernance() {
   const [items, setItems] = useState<Array<{ project: { id: string; name: string }; governance: GovernanceDashboard }>>([]);
   const load = useCallback(() => { void api.getGovernancePortfolio().then((r) => setItems(r.projects)).catch(() => undefined); }, []);
   useEffect(load, [load]);
-  return <section className="card"><div className="git-box-head"><h2>Portafoglio budget</h2><button className="btn btn-ghost" onClick={load}>Aggiorna</button></div>{items.length === 0 ? <p className="muted">Nessun consumo registrato.</p> : <ul className="git-line">{items.map(({ project, governance }) => <li key={project.id}><strong>{project.name}</strong>: € {governance.budget.used.toFixed(4)} / {governance.policy.costBudget === null ? 'illimitato' : `€ ${governance.policy.costBudget.toFixed(4)}`} {governance.budget.remaining !== null && governance.budget.remaining <= 0 ? '— a rischio' : ''}</li>)}</ul>}</section>;
-}
-
-function ProviderCatalog() {
-  const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
-  useEffect(() => { void api.getProviderCatalog().then((result) => setCatalog(result.catalog)).catch(() => undefined); }, []);
-  return <section className="card"><h2>Catalogo runtime, provider e modelli</h2>{catalog.map((entry) => <p key={entry.runtime.id} className="muted small"><strong>{entry.runtime.name}</strong> ({entry.runtime.available ? 'disponibile' : 'non disponibile'}) · provider {entry.provider.name} · {entry.models.length ? entry.models.map((model) => `${model.name}: ${model.pricing.inputPerMillion === null ? 'pricing non configurato' : `$${model.pricing.inputPerMillion}/M input, $${model.pricing.outputPerMillion}/M output`}`).join(' · ') : 'modello gestito dal runtime'}</p>)}</section>;
-}
-
-// ── ProjectCard ───────────────────────────────────────────────────────
-
-function ProjectCard({
-  project, pendingStatus, onPendingStatus, onApplyStatus, onRefreshGit,
-  statusBusy, gitBusy,
-}: {
-  project: Project; pendingStatus: ProjectStatus;
-  onPendingStatus: (id: string, status: ProjectStatus) => void;
-  onApplyStatus: (project: Project) => void;
-  onRefreshGit: (id: string) => void;
-  statusBusy: boolean; gitBusy: boolean;
-}) {
-  return (
-    <article className="card project-card">
-      <header className="project-card-head">
-        <div className="project-title">
-          <h3>{project.name}</h3>
-          <span className={`badge badge-${project.status.toLowerCase()}`}>
-            {STATUS_LABEL[project.status] ?? project.status}
-          </span>
-        </div>
-        <span className={`project-group-mark group-${project.statusGroup.toLowerCase()}`}>
-          {GROUP_LABEL[project.statusGroup]}
-        </span>
-      </header>
-      <p className="mono repo-path">Repository: <code>{project.repositoryPath ?? '—'}</code></p>
-      {project.currentObjective && (
-        <p className="objective">
-          <span className="objective-label">Obiettivo corrente:</span> {project.currentObjective}
-        </p>
-      )}
-      <GitStatusBox git={project.gitStatus} projectId={project.id} onRefresh={onRefreshGit} busy={gitBusy} />
-      <GovernanceCard project={project} />
-      <div className="status-control">
-        <label className="status-label">Stato operativo</label>
-        <div className="status-row">
-          <select value={pendingStatus ?? project.status}
-            onChange={(event) => onPendingStatus(project.id, event.target.value as ProjectStatus)}>
-            {STATUS_OPTIONS.map((s) => (<option key={s} value={s}>{STATUS_LABEL[s]}</option>))}
-          </select>
-          <button type="button" className="btn touch-target" onClick={() => onApplyStatus(project)} disabled={statusBusy}>
-            {statusBusy ? 'Invio…' : 'Imposta stato'}
-          </button>
-        </div>
-      </div>
-      {project.updatedAt && <p className="muted small">Aggiornato: {formatDate(project.updatedAt)}</p>}
-    </article>
-  );
-}
-// ── ObjectiveCard ─────────────────────────────────────────────────────
-
-function ObjectiveCard({
-  objective, sessions, checkpoints, busy, onStart, onStop, onComplete,
-  onBlock, onFail, onCancel, onDecide, deciding,
-}: {
-  objective: Objective; sessions: AgentSession[]; checkpoints: Checkpoint[];
-  busy: boolean;
-  onStart: (objectiveId: string, sessionId: string) => void;
-  onStop: (objectiveId: string, sessionId: string, reason?: string) => void;
-  onComplete: (objectiveId: string, report?: string) => void;
-  onBlock: (objectiveId: string, reason?: string) => void;
-  onFail: (objectiveId: string, detail?: string) => void;
-  onCancel: (objectiveId: string) => void;
-  onDecide?: (checkpointId: string, decisionType: DecisionType, note?: string) => void;
-  deciding?: string | null;
-}) {
-  const [attemptsBySession, setAttemptsBySession] = useState<Record<string, import('./api/client').ExecutionAttempt[]>>({});
-  useEffect(() => {
-    void Promise.all(sessions.map(async (session) => [session.id, (await api.listExecutionAttempts(session.id)).attempts] as const))
-      .then((entries) => setAttemptsBySession(Object.fromEntries(entries))).catch(() => undefined);
-  }, [sessions]);
-  const [reason, setReason] = useState('');
-  const [blockReason, setBlockReason] = useState('');
-  const [failDetail, setFailDetail] = useState('');
-  const [report, setReport] = useState('');
-  const [policyBudget, setPolicyBudget] = useState(objective.policy?.costBudget?.toString() ?? '');
-  const [policyWarning, setPolicyWarning] = useState((objective.policy?.warningPercent ?? 80).toString());
-  const [policyAction, setPolicyAction] = useState(objective.policy?.action ?? 'WARN');
-  const [policyBusy, setPolicyBusy] = useState(false);
-  const [exceptions, setExceptions] = useState<import('./api/client').GovernanceException[]>([]);
-  const loadExceptions = useCallback(() => { void api.listGovernanceExceptions(objective.id).then((r) => setExceptions(r.exceptions)).catch(() => undefined); }, [objective.id]);
-  useEffect(loadExceptions, [loadExceptions]);
-  const savePolicy = async () => { setPolicyBusy(true); try { await api.setObjectivePolicy(objective.id, { costBudget: policyBudget.trim() ? Number(policyBudget) : null, warningPercent: Number(policyWarning), action: policyAction }); } finally { setPolicyBusy(false); } };
-  const hasOpenSession = sessions.some(
-    (s) => OPEN_OBJECTIVE_STATUSES.includes(objective.status) && (s.status === 'IN_AVVIO' || s.status === 'ATTIVA'),
-  );
-  const canComplete = !hasOpenSession && objective.status !== 'COMPLETATO' && objective.status !== 'ANNULLATO';
-  const canCancel = !hasOpenSession && objective.status !== 'COMPLETATO' && objective.status !== 'ANNULLATO';
-  return (
-    <article className="card objective-card">
-      <header className="objective-card-head">
-        <h3>{objective.title}</h3>
-        <span className={`badge badge-${objective.status.toLowerCase()}`}>
-          {OBJECTIVE_STATUS_LABEL[objective.status]}
-        </span>
-      </header>
-      <p className="objective">{objective.objectiveText}</p>
-      <details className="governance-box"><summary>Policy budget obiettivo {objective.policy ? '(override attivo)' : '(eredita progetto)'}</summary><div className="status-row"><input type="number" min="0" step="0.001" value={policyBudget} onChange={(e) => setPolicyBudget(e.target.value)} placeholder="Budget €" /><input type="number" min="1" max="100" value={policyWarning} onChange={(e) => setPolicyWarning(e.target.value)} placeholder="Soglia %" /><select value={policyAction} onChange={(e) => setPolicyAction(e.target.value as 'WARN' | 'HARD_STOP' | 'REQUIRE_APPROVAL')}><option value="WARN">Avviso</option><option value="HARD_STOP">Hard stop</option><option value="REQUIRE_APPROVAL">Approvazione umana</option></select><button type="button" className="btn" disabled={policyBusy} onClick={() => void savePolicy()}>{policyBusy ? 'Salvo…' : 'Salva override'}</button></div></details>
-      {exceptions.filter((exception) => !exception.revokedAt).length > 0 && <p className="muted small">Eccezioni attive: {exceptions.filter((exception) => !exception.revokedAt).map((exception) => <span key={exception.id}> {exception.note ?? exception.id.slice(0, 8)} <button className="btn btn-ghost" onClick={() => void api.revokeGovernanceException(exception.id).then(loadExceptions)}>Revoca</button></span>)}</p>}
-      {objective.invariants && (
-        <div className="objective-section">
-          <span className="objective-label">Invarianti</span>
-          <ul className="objective-list">{objective.invariants.map((l, i) => (<li key={i}>{l}</li>))}</ul>
-        </div>
-      )}
-      {objective.acceptanceCriteria && (
-        <div className="objective-section">
-          <span className="objective-label">Criteri di accettazione</span>
-          <ul className="objective-list">{objective.acceptanceCriteria.map((l, i) => (<li key={i}>{l}</li>))}</ul>
-        </div>
-      )}
-      {objective.stopCondition && (
-        <div className="objective-section">
-          <span className="objective-label">Condizione di stop</span><p>{objective.stopCondition}</p>
-        </div>
-      )}
-      {objective.gitStart && <p className="muted small">Git inizio: <code className="git-ref">{shortCommit(objective.gitStart.head ?? null)}</code></p>}
-      {objective.gitEnd && <p className="muted small">Git fine: <code className="git-ref">{shortCommit(objective.gitEnd.head ?? null)}</code></p>}
-      {objective.startedAt && <p className="muted small">Inizio: {formatDate(objective.startedAt)}</p>}
-      {objective.completedAt && <p className="muted small">Completato: {formatDate(objective.completedAt)}</p>}
-      {objective.finalReport && (
-        <div className="objective-section">
-          <span className="objective-label">Report finale</span><p className="report-text">{objective.finalReport}</p>
-        </div>
-      )}
-
-      <div className="sessions-box">
-        <span className="objective-label">Sessioni agente</span>
-        {sessions.length === 0 ? (
-          <p className="muted small">Nessuna sessione registrata.</p>
-        ) : sessions.map((session) => {
-          const startable = session.status === 'IN_AVVIO';
-          const stoppable = session.status === 'ATTIVA';
-          return (
-            <div className="session-row" key={session.id}>
-              <div className="session-row-head">
-                <span className={`badge badge-${session.status.toLowerCase()}`}>{SESSION_STATUS_LABEL[session.status]}</span>
-                <span className="muted small">{session.agentType}</span>
-                <time className="muted small">inizio {formatDate(session.startedAt)}</time>
-                {session.endedAt && <time className="muted small">fine {formatDate(session.endedAt)}</time>}
-              </div>
-              {session.processReference && <code className="muted small session-ref">{session.processReference}</code>}
-              {session.exitReason && <p className="muted small session-exit">{session.exitReason}</p>}
-              {session.executionSelection?.decision && <p className="muted small"><strong>{session.executionSelection.decision.mode === 'AUTOMATIC' ? 'Selezione automatica' : 'Selezione esplicita'}:</strong> {session.executionSelection.decision.reason}</p>}
-              {(attemptsBySession[session.id] ?? []).map((attempt) => <p className="muted small" key={attempt.id}>Tentativo #{attempt.attemptIndex}: <strong>{attempt.status}</strong> · {attempt.runtimeName ?? 'runtime'} / {attempt.providerName ?? 'provider'} / {attempt.modelName ?? 'modello runtime'}{attempt.totalTokens !== null ? ` · ${attempt.totalTokens} token` : ''}{attempt.costActual !== null ? ` · €${attempt.costActual.toFixed(4)}` : attempt.costEstimate !== null ? ` · stim. €${attempt.costEstimate.toFixed(4)}` : ''}{attempt.reason ? ` — ${attempt.reason}` : ''}</p>)}
-              {startable && (
-                <button type="button" className="btn touch-target" disabled={busy}
-                  onClick={() => onStart(objective.id, session.id)}>
-                  {busy ? 'Avvio…' : 'Avvia sessione'}
-                </button>
-              )}
-              {stoppable && (
-                <div className="session-actions">
-                  <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Motivo stop (opzionale)" maxLength={500} />
-                  <button type="button" className="btn btn-ghost touch-target" disabled={busy}
-                    onClick={() => onStop(objective.id, session.id, reason.trim() || undefined)}>
-                    {busy ? 'Stop…' : 'Ferma sessione'}
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {hasOpenSession && (
-        <div className="objective-card-actions block-fail-actions">
-          <div className="session-actions">
-            <input value={blockReason} onChange={(e) => setBlockReason(e.target.value)} placeholder="Motivo blocco (opzionale)" maxLength={500} />
-            <button type="button" className="btn btn-warn touch-target" disabled={busy}
-              onClick={() => onBlock(objective.id, blockReason.trim() || undefined)}>
-              {busy ? 'Blocco…' : 'Blocca obiettivo'}
-            </button>
-          </div>
-          <div className="session-actions">
-            <input value={failDetail} onChange={(e) => setFailDetail(e.target.value)} placeholder="Dettaglio errore (opzionale)" maxLength={1000} />
-            <button type="button" className="btn btn-danger touch-target" disabled={busy}
-              onClick={() => onFail(objective.id, failDetail.trim() || undefined)}>
-              {busy ? 'Invio…' : 'Segnala errore'}
-            </button>
-          </div>
-        </div>
-      )}
-      {canComplete && (
-        <div className="session-actions complete-actions">
-          <textarea value={report} onChange={(e) => setReport(e.target.value)} rows={2} maxLength={10000} placeholder="Report finale (opzionale)" />
-          <button type="button" className="btn touch-target" disabled={busy}
-            onClick={() => onComplete(objective.id, report.trim() || undefined)}>
-            {busy ? 'Completo…' : 'Completa obiettivo'}
-          </button>
-        </div>
-      )}
-      {canCancel && (
-        <div className="objective-card-actions">
-          <button type="button" className="btn btn-danger touch-target" disabled={busy}
-            onClick={() => onCancel(objective.id)}>Annulla obiettivo</button>
-        </div>
-      )}
-      <CheckpointList checkpoints={checkpoints} onDecide={onDecide} deciding={deciding} />
-    </article>
-  );
-}
-
-// ── ObjectivesSection ─────────────────────────────────────────────────
-
-function ObjectivesSection({
-  projects, objectivesByProject, sessionsByObjective, checkpointsByObjective,
-  selectedProjectId, onSelectProject, busy, creating, onCreate, onStart,
-  onStop, onComplete, onBlock, onFail, onCancel, onDecide, deciding, providers,
-}: {
-  projects: Project[]; objectivesByProject: Record<string, Objective[]>;
-  sessionsByObjective: Record<string, AgentSession[]>; checkpointsByObjective: Record<string, Checkpoint[]>;
-  selectedProjectId: string; onSelectProject: (id: string) => void;
-  busy: Record<string, boolean>; creating: boolean;
-  onCreate: (input: CreateObjectiveInput) => Promise<void>;
-  onStart: (oId: string, sId: string) => void;
-  onStop: (oId: string, sId: string, reason?: string) => void;
-  onComplete: (oId: string, report?: string) => void;
-  onBlock: (oId: string, reason?: string) => void;
-  onFail: (oId: string, detail?: string) => void;
-  onCancel: (oId: string) => void;
-  onDecide?: (cId: string, dt: DecisionType, note?: string) => void;
-  deciding?: string | null;
-  providers: ExecutionProvider[];
-}) {
-  const [title, setTitle] = useState('');
-  const [objectiveText, setObjectiveText] = useState('');
-  const [invariants, setInvariants] = useState('');
-  const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
-  const [stopCondition, setStopCondition] = useState('');
-  const [runtime, setRuntime] = useState('');
-  const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
-  const [providerId, setProviderId] = useState('');
-  const [modelId, setModelId] = useState('');
-  const [outputTokenLimit, setOutputTokenLimit] = useState('');
-  const [estimatedCost, setEstimatedCost] = useState('');
-  const [catalogEstimate, setCatalogEstimate] = useState<import('./api/client').PreflightEstimate | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const selected = projects.find((p) => p.id === selectedProjectId) ?? null;
-  const selectedCatalog = catalog.find((entry) => entry.runtime.id === runtime) ?? null;
-  useEffect(() => { void api.getProviderCatalog().then((result) => setCatalog(result.catalog)).catch(() => undefined); }, []);
-  useEffect(() => { if (!selectedCatalog) { setProviderId(''); setModelId(''); return; } setProviderId(selectedCatalog.provider.id); setModelId(selectedCatalog.runtime.defaultModel ?? selectedCatalog.models[0]?.id ?? ''); }, [selectedCatalog]);
-  const objectives = selected ? objectivesByProject[selected.id] ?? [] : [];
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const t = title.trim(); const o = objectiveText.trim();
-    if (!t || !o) { setFormError("Titolo e testo dell'obiettivo sono obbligatori."); return; }
-    setFormError(null);
-    void onCreate({
-      title: t, objectiveText: o,
-      ...(invariants.trim() ? { invariants: splitLines(invariants) } : {}),
-      ...(acceptanceCriteria.trim() ? { acceptanceCriteria: splitLines(acceptanceCriteria) } : {}),
-      ...(stopCondition.trim() ? { stopCondition: stopCondition.trim() } : {}),
-      ...(runtime ? { runtime } : {}),
-      ...(providerId ? { providerId } : {}),
-      ...(modelId ? { modelId } : {}),
-      ...(outputTokenLimit ? { outputTokenLimit: Number(outputTokenLimit) } : {}),
-      ...(estimatedCost.trim() ? { estimatedCost: Number(estimatedCost) } : {}),
-    }).then(() => { setTitle(''); setObjectiveText(''); setInvariants(''); setAcceptanceCriteria(''); setStopCondition(''); setEstimatedCost(''); });
-  };
-  return (
-    <div className="objectives-section">
-      <div className="objectives-project-select">
-        <label className="select-label">
-          Progetto
-          <select value={selectedProjectId} onChange={(e) => onSelectProject(e.target.value)}>
-            <option value="">— Seleziona —</option>
-            {projects.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
-          </select>
-        </label>
-      </div>
-      {selected && (
-        <form onSubmit={handleSubmit} className="card create-objective-form">
-          <h3>Nuovo obiettivo per {selected.name}</h3>
-          <label className="field">Titolo * <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Titolo breve" maxLength={200} disabled={creating} /></label>
-          <label className="field">Obiettivo * <textarea value={objectiveText} onChange={(e) => setObjectiveText(e.target.value)} rows={3} maxLength={5000} placeholder="Descrizione dettagliata" disabled={creating} /></label>
-          <div className="runtime-selection">
-            <label className="field">Runtime <select value={runtime} onChange={(e) => setRuntime(e.target.value)} disabled={creating}><option value="">Automatico (consigliato)</option>{providers.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.runtimeName}{provider.configured ? '' : ' (non disponibile)'}</option>)}</select></label>
-            <label className="field">Provider <input value={providerId || 'Seleziona un runtime'} readOnly disabled /></label>
-            <label className="field">Modello <select value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={creating || !selectedCatalog || selectedCatalog.models.length === 0}><option value="">{selectedCatalog?.models.length ? 'Seleziona modello' : 'Gestito dal runtime'}</option>{selectedCatalog?.models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
-            <label className="field">Output max <input type="number" min="1" max={selectedCatalog?.models.find((model) => model.id === modelId)?.limits.defaultOutputTokens || undefined} value={outputTokenLimit} onChange={(e) => setOutputTokenLimit(e.target.value)} placeholder="Limite catalogo" disabled={creating || !modelId} /></label>
-          </div>
-          {selectedCatalog && <p className="muted small">{selectedCatalog.runtime.available ? `Compatibile e disponibile · ${selectedCatalog.provider.name}` : 'Combinazione non utilizzabile: runtime non disponibile'}</p>}
-          <label className="field">Stima costo affidabile (€) <input type="number" min="0" step="0.001" value={estimatedCost} onChange={(e) => setEstimatedCost(e.target.value)} placeholder="Opzionale: abilita enforcement preventivo" disabled={creating} /></label>
-          <button type="button" className="btn btn-ghost" disabled={!runtime || !objectiveText.trim()} onClick={() => void api.estimateProviderCost(runtime, objectiveText, stopCondition || null).then((result) => { setCatalogEstimate(result.estimate); if (result.estimate.cost !== null) setEstimatedCost(String(result.estimate.cost)); })}>Calcola stima catalogo</button>
-          {catalogEstimate && <p className="muted small">{catalogEstimate.reason}: {catalogEstimate.cost === null ? 'costo non disponibile' : `€ ${catalogEstimate.cost.toFixed(6)}`} · {catalogEstimate.inputTokens}+{catalogEstimate.outputTokens} token · {catalogEstimate.modelId ?? 'modello runtime'}</p>}
-          <label className="field">Invarianti <textarea value={invariants} onChange={(e) => setInvariants(e.target.value)} rows={2} maxLength={5000} placeholder="Invarianti (uno per riga)" disabled={creating} /></label>
-          <label className="field">Criteri di accettazione <textarea value={acceptanceCriteria} onChange={(e) => setAcceptanceCriteria(e.target.value)} rows={2} maxLength={5000} placeholder="Criteri (uno per riga)" disabled={creating} /></label>
-          <label className="field">Condizione di stop <input value={stopCondition} onChange={(e) => setStopCondition(e.target.value)} placeholder="Condizione di stop" maxLength={2000} disabled={creating} /></label>
-          {formError && <p className="form-error">{formError}</p>}
-          <button type="submit" className="btn btn-primary touch-target" disabled={creating}>{creating ? 'Creazione…' : 'Crea obiettivo'}</button>
-        </form>
-      )}
-      {objectives.map((o) => (
-        <ObjectiveCard key={o.id} objective={o} sessions={sessionsByObjective[o.id] ?? []}
-          checkpoints={checkpointsByObjective[o.id] ?? []} busy={busy[o.id] ?? false}
-          onStart={onStart} onStop={onStop} onComplete={onComplete} onBlock={onBlock}
-          onFail={onFail} onCancel={onCancel} onDecide={onDecide} deciding={deciding} />
-      ))}
-      {selected && objectives.length === 0 && <p className="muted">Nessun obiettivo per questo progetto.</p>}
-    </div>
-  );
+  return <section className="card portfolio-governance-card"><div className="git-box-head"><h2>Portafoglio budget</h2><button className="btn btn-ghost" onClick={load}>Aggiorna</button></div>{items.length === 0 ? <p className="muted">Nessun consumo registrato.</p> : <ul className="git-line">{items.map(({ project, governance }) => <li key={project.id}><strong>{project.name}</strong>: € {governance.budget.used.toFixed(4)} / {governance.policy.costBudget === null ? 'illimitato' : `€ ${governance.policy.costBudget.toFixed(4)}`} {governance.budget.remaining !== null && governance.budget.remaining <= 0 ? '— a rischio' : ''}</li>)}</ul>}</section>;
 }
 
 // ── Main App ──────────────────────────────────────────────────────────
@@ -463,16 +66,10 @@ export default function App() {
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  // Navigation
-  const [activeTab, setActiveTab] = useState<MobileTab>('home');
-  // Form state
-  const [name, setName] = useState('');
-  const [repositoryPath, setRepositoryPath] = useState('');
-  const [objective, setObjective] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [pendingStatus, setPendingStatus] = useState<Record<string, ProjectStatus>>({});
-  const [statusBusy, setStatusBusy] = useState<Record<string, boolean>>({});
+  // Navigation (§4 CONTROL_ROOM_SPEC.md)
+  const [activeTab, setActiveTab] = useState<NavSection>('control-room');
+  // Spesa rilevata (Fase 2): alimentata dalla Control Room per l'header.
+  const [costToday, setCostToday] = useState<number | null>(null);
   const [gitBusy, setGitBusy] = useState<Record<string, boolean>>({});
   // Objectives
   const [objectivesByProject, setObjectivesByProject] = useState<Record<string, Objective[]>>({});
@@ -508,16 +105,30 @@ export default function App() {
   const refresh = useCallback(async () => {
     try {
       const [sr, pr, er, nr, runtimeList] = await Promise.all([api.status(), api.listProjects(), api.listEvents(30), api.listNotifications(), api.listExecutionProviders()]);
-      setStatus(sr); setProjects(pr.projects); setEvents(er.events); setNotifications(nr.notifications); setProviders(runtimeList.providers);
+      setStatus(sr); setProjects(pr.projects); setEvents(er.events); setNotifications(nr.notifications); setProviders(runtimeList.providers); setCostToday(sr.costToday);
       await loadM3(pr.projects); setLoadState('ready'); setError(null);
     } catch (err) { setLoadState('error'); setError(err instanceof Error ? err.message : String(err)); }
   }, [loadM3]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  // Bootstrap della UI solo a sessione autenticata: durante il ripristino della
+  // sessione la vista resta neutra (Caricamento…) e non mostra il flash iniziale
+  // «Errore di connessione / Autenticazione richiesta»; l'errore appare solo se
+  // il refresh fallisce davvero con sessione attiva.
+  useEffect(() => {
+    if (!checkingAuth && authenticated) {
+      setLoadState((prev) => (prev === 'ready' ? prev : 'loading'));
+      void refresh();
+    }
+  }, [checkingAuth, authenticated, refresh]);
   useEffect(() => {
     const timer = window.setInterval(() => { void api.listNotifications().then((r) => setNotifications(r.notifications)).catch(() => undefined); }, 30_000);
     return () => window.clearInterval(timer);
   }, []);
+  // Refresh automatico affidabile: la UI resta allineata al backend.
+  useEffect(() => {
+    const timer = window.setInterval(() => { if (authenticated) void refresh(); }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [refresh, authenticated]);
   useEffect(() => { if (!selectedProjectId && projects.length > 0) setSelectedProjectId(projects[0].id); }, [projects, selectedProjectId]);
   useEffect(() => { if (!historyProjectId && selectedProjectId) setHistoryProjectId(selectedProjectId); }, [selectedProjectId, historyProjectId]);
   useEffect(() => {
@@ -534,18 +145,24 @@ export default function App() {
   }, [historyProjectId, historyObjectiveId, historySessionId]);
 
   // ── Handlers ──
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const t = name.trim();
-    if (!t) { setFormError('Il nome del progetto è obbligatorio.'); return; }
-    setSubmitting(true); setFormError(null);
+  const handleCreateProject = async (input: { name: string; repositoryPath?: string; currentObjective?: string }) => {
+    setActionError(null);
     try {
-      await api.createProject({ name: t,
-        ...(repositoryPath.trim() ? { repositoryPath: repositoryPath.trim() } : {}),
-        ...(objective.trim() ? { currentObjective: objective.trim() } : {}) });
-      setName(''); setRepositoryPath(''); setObjective(''); await refresh();
-    } catch (err) { setFormError(err instanceof Error ? err.message : String(err)); }
-    finally { setSubmitting(false); }
+      const result = await api.createProject({
+        name: input.name,
+        ...(input.repositoryPath ? { repositoryPath: input.repositoryPath } : {}),
+        ...(input.currentObjective ? { currentObjective: input.currentObjective } : {}),
+      });
+      // Apri il progetto appena creato.
+      setSelectedProjectId(result.project.id);
+      await refresh();
+      // Usa la risposta di POST /api/projects: senza obiettivo iniziale porta
+      // direttamente a «Nuovo obiettivo»; con obiettivo iniziale l'obiettivo è
+      // già stato creato e avviato dal server (autoStart), quindi resta sul progetto.
+      if (!result.initialObjective) {
+        setActiveTab('objectives');
+      }
+    } catch (err) { setActionError(err instanceof Error ? err.message : String(err)); }
   };
   const handleRefreshGit = async (id: string) => {
     setActionError(null); setGitBusy((p) => ({ ...p, [id]: true }));
@@ -553,15 +170,6 @@ export default function App() {
     catch (err) { setActionError(err instanceof Error ? err.message : String(err)); }
     finally { setGitBusy((p) => ({ ...p, [id]: false })); }
   };
-  const handleApplyStatus = async (project: Project) => {
-    const target = pendingStatus[project.id] ?? project.status;
-    setActionError(null); setStatusBusy((p) => ({ ...p, [project.id]: true }));
-    try { await api.setProjectStatus(project.id, target); await refresh(); }
-    catch (err) { setActionError(err instanceof Error ? err.message : String(err)); }
-    finally { setStatusBusy((p) => ({ ...p, [project.id]: false })); }
-  };
-  const handlePendingStatus = (id: string, s: ProjectStatus) =>
-    setPendingStatus((p) => ({ ...p, [id]: s }));
   const runObjAction = async (objectiveId: string, action: () => Promise<unknown>) => {
     setActionError(null); setObjectiveBusy((p) => ({ ...p, [objectiveId]: true }));
     try { await action(); await refresh(); }
@@ -574,12 +182,13 @@ export default function App() {
     catch (err) { setActionError(err instanceof Error ? err.message : String(err)); }
     finally { setDecidingCheckpoint(null); }
   };
-  const handleStart = (oId: string, sId: string) => runObjAction(oId, () => api.startSession(oId, sId));
+  const handleStart = (oId: string, sId: string, selection?: { runtimeId: string; providerId?: string; modelId?: string | null }) => runObjAction(oId, () => api.startSession(oId, sId, selection));
   const handleStop = (oId: string, sId: string, reason?: string) => runObjAction(oId, () => api.stopSession(oId, sId, reason));
   const handleComplete = (oId: string, report?: string) => runObjAction(oId, () => api.completeObjective(oId, report));
   const handleBlock = (oId: string, reason?: string) => runObjAction(oId, () => api.blockObjective(oId, reason));
   const handleFail = (oId: string, detail?: string) => runObjAction(oId, () => api.failObjective(oId, detail));
   const handleCancel = (oId: string) => runObjAction(oId, () => api.cancelObjective(oId));
+  const handleRetry = (oId: string, selection?: { runtimeId: string; providerId?: string; modelId?: string | null }) => runObjAction(oId, () => api.retryObjective(oId, selection));
   const markNotificationsRead = async () => { await api.markAllNotificationsRead(); setNotifications([]); };
   const handleCreateObj = async (input: CreateObjectiveInput) => {
     setCreatingObjective(true); setActionError(null);
@@ -593,15 +202,15 @@ export default function App() {
     return (<div className="login-container"><div className="login-card"><div className="login-logo">🦖</div><p className="muted">Verifica autenticazione...</p></div></div>);
   }
   if (!authenticated) {
-    return <LoginPage onAuthenticated={() => { setAuthenticated(true); void refresh(); }} />;
+    return <LoginPage onAuthenticated={() => { setAuthenticated(true); }} />;
   }
 
   const pendingDecisions = Object.values(checkpointsByObjective).flat().filter((c) => c.status === 'PENDING_DECISION').length;
 
   if (loadState === 'error') {
     return (
-      <div className="app-container">
-        <header className="app-header"><h1>🦖 G-Rex Agent Control</h1></header>
+      <div className="app-shell">
+        <header className="app-header"><div className="header-brand"><span className="brand-mark">🦖</span><span className="brand-text">G-Rex Control Room</span></div></header>
         <div className="error-container">
           <p className="error-title">⚠ Errore di connessione</p><p className="error-message">{error}</p>
           <button type="button" className="btn btn-primary touch-target" onClick={() => void refresh()}>Riprova</button>
@@ -611,104 +220,116 @@ export default function App() {
   }
 
   return (
-    <div className="app-container">
-      <header className="app-header">
-        <h1>🦖 G-Rex Agent Control</h1>
-        <div className="header-right">
-          {pendingDecisions > 0 && <span className="pending-badge">🔔 {pendingDecisions}</span>}
-          <span className="app-version">v0.4.0</span>
-        </div>
-      </header>
-      {loadState === 'loading' ? (
-        <main className="app-main"><p className="muted">Caricamento…</p></main>
-      ) : (<main className="app-main">
+    <AppShell activeSection={activeTab} onNavigate={(section) => setActiveTab(section as NavSection)} pendingDecisions={pendingDecisions} costToday={costToday}>
+      {loadState === 'loading' ? (<p className="muted">Caricamento…</p>) : (<>
 
           {notifications.length > 0 && <section className="card" aria-live="polite">
             <div className="git-box-head"><h2>Notifiche ({notifications.length})</h2><button type="button" className="btn btn-ghost" onClick={() => void markNotificationsRead()}>Segna lette</button></div>
             <ul className="event-list">{notifications.slice(0, 5).map((notification) => <li key={notification.id}><time>{formatDate(notification.createdAt)}</time><code>{notification.severity}</code><span><strong>{notification.title}</strong> — {notification.message}</span></li>)}</ul>
           </section>}
 
-          {(actionError || formError) && (
-            <div className="error-bar" onClick={() => { setActionError(null); setFormError(null); }}>
-              ⚠ {actionError || formError}<span className="error-dismiss">✕</span>
+          {(actionError) && (
+            <div className="error-bar" onClick={() => { setActionError(null); }}>
+              ⚠ {actionError}<span className="error-dismiss">✕</span>
             </div>
           )}
-          {/* HOME TAB */}
-          {activeTab === 'home' && (<div className="tab-content">
-            <section className="card">
-              <h2>Progetti</h2>
-              {projects.length === 0 ? <p className="muted">Nessun progetto. Vai a Progetti.</p> : (
-                <div className="summary-grid">
-                  {GROUPS.map((group) => {
-                    const grouped = projects.filter((p) => p.statusGroup === group.key);
-                    return (
-                      <div key={group.key} className="summary-cell">
-                        <h3 className={`summary-title group-${group.key.toLowerCase()}`}>{group.label} ({grouped.length})</h3>
-                        {grouped.length === 0 ? <p className="muted small">{group.hint}</p> : (
-                          <ul className="summary-list">
-                            {grouped.map((p) => (
-                              <li key={p.id} className="summary-item clickable"
-                                onClick={() => { setSelectedProjectId(p.id); setActiveTab('projects'); }}>
-                                <strong>{p.name}</strong>
-                                <span className={`badge badge-${p.status.toLowerCase()}`}>{STATUS_LABEL[p.status]}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-            {pendingDecisions > 0 && (
-              <section className="card pending-section">
-                <h2>🔔 Decisioni pendenti ({pendingDecisions})</h2>
-              </section>
-            )}
-            <section className="card">
-              <h2>Attività recente</h2>
-              {events.length === 0 ? <p className="muted">Nessun evento recente.</p> : (
-                <ul className="event-list">
-                  {events.map((ev) => (
-                    <li key={ev.id}><time>{formatDate(ev.timestamp)}</time><code>{ev.type}</code>
-                      <span>{ev.payload ? JSON.stringify(ev.payload) : ''}</span></li>
-                  ))}
-                </ul>
-              )}
-            </section>
+          {/* CONTROL ROOM (cockpit operativo — Fase 2, §5) */}
+          {activeTab === 'control-room' && (<div className="tab-content control-room-tab">
+            <ControlRoom
+              projects={projects}
+              objectivesByProject={objectivesByProject}
+              sessionsByObjective={sessionsByObjective}
+              checkpointsByObjective={checkpointsByObjective}
+              events={events}
+              onNavigate={(section) => setActiveTab(section as NavSection)}
+              onSelectProject={(id) => { setSelectedProjectId(id); setActiveTab('projects'); }}
+              onDecide={handleDecide}
+              deciding={decidingCheckpoint}
+            />
           </div>)}
 
-          {/* PROJECTS TAB */}
-          {activeTab === 'projects' && (<div className="tab-content">
-            <PortfolioGovernance />
-            <ProviderCatalog />
-            <section className="card">
-              <h2>Nuovo progetto</h2>
-              <form onSubmit={handleSubmit} className="create-project-form">
-                <label className="field">Nome * <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome del progetto" maxLength={200} disabled={submitting} /></label>
-                <label className="field">Repository <input value={repositoryPath} onChange={(e) => setRepositoryPath(e.target.value)} placeholder="/percorso/al/repository" maxLength={2000} disabled={submitting} /></label>
-                <label className="field">Obiettivo iniziale <input value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="Opzionale" maxLength={2000} disabled={submitting} /></label>
-                {formError && <p className="form-error">{formError}</p>}
-                <button type="submit" className="btn btn-primary touch-target" disabled={submitting}>{submitting ? 'Creazione…' : 'Crea progetto'}</button>
-              </form>
-            </section>
-            {projects.map((p) => (
-              <ProjectCard key={p.id} project={p} pendingStatus={pendingStatus[p.id] ?? p.status}
-                onPendingStatus={handlePendingStatus} onApplyStatus={handleApplyStatus}
-                onRefreshGit={handleRefreshGit} statusBusy={statusBusy[p.id] ?? false} gitBusy={gitBusy[p.id] ?? false} />
-            ))}
-            <ObjectivesSection projects={projects} objectivesByProject={objectivesByProject}
+          {/* PROJECTS (§4: Progetti — vista dedicata in Fase 3) */}
+          {activeTab === 'projects' && (<div className="tab-content project-view-tab">
+            <ProjectView
+              projects={projects}
+              objectivesByProject={objectivesByProject}
+              sessionsByObjective={sessionsByObjective}
+              checkpointsByObjective={checkpointsByObjective}
+              selectedProjectId={selectedProjectId}
+              onSelectProject={setSelectedProjectId}
+              gitBusy={gitBusy}
+              onRefreshGit={handleRefreshGit}
+              onCreateProject={handleCreateProject}
+              onDecide={handleDecide}
+              deciding={decidingCheckpoint}
+              onNavigateObjectives={(id) => { setSelectedProjectId(id); setActiveTab('objectives'); }}
+            />
+          </div>)}
+
+          {/* OBJECTIVES (§4: Obiettivi — vista dedicata in Fase 4) */}
+          {activeTab === 'objectives' && (<div className="tab-content objective-view-tab">
+            <ObjectiveView projects={projects} objectivesByProject={objectivesByProject}
               sessionsByObjective={sessionsByObjective} checkpointsByObjective={checkpointsByObjective}
               selectedProjectId={selectedProjectId} onSelectProject={setSelectedProjectId}
               busy={objectiveBusy} creating={creatingObjective} onCreate={handleCreateObj}
               onStart={handleStart} onStop={handleStop} onComplete={handleComplete}
               onBlock={handleBlock} onFail={handleFail} onCancel={handleCancel}
+              onRetry={handleRetry}
               onDecide={handleDecide} deciding={decidingCheckpoint} providers={providers} />
           </div>)}
 
-          {/* HISTORY TAB */}
-          {activeTab === 'history' && (<div className="tab-content">
+          {/* EXECUTIONS (§4: Esecuzioni — vista dedicata in Fase 5) */}
+          {activeTab === 'executions' && (<div className="tab-content executions-view-tab">
+            <ExecutionsView
+              projects={projects}
+              objectivesByProject={objectivesByProject}
+              sessionsByObjective={sessionsByObjective}
+              providers={providers}
+              onStop={handleStop}
+              onCancel={handleCancel}
+              busy={objectiveBusy}
+            />
+          </div>)}
+
+          {/* REQUIRES YOU (§4: Richiede te — vista dedicata in Fase 6) */}
+
+          {activeTab === 'requires-you' && (<div className="tab-content requires-you-tab">
+            <RequiresYouView
+              objectivesByProject={objectivesByProject}
+              checkpointsByObjective={checkpointsByObjective}
+              onDecide={handleDecide}
+              onCancel={handleCancel}
+              onRetry={handleRetry}
+              deciding={decidingCheckpoint}
+              busy={objectiveBusy}
+            />
+          </div>)}
+
+          {/* GOVERNANCE (§4: nav secondaria — vista dedicata in Fase 10) */}
+          {activeTab === 'governance' && (<div className="tab-content">
+            <PortfolioGovernance />
+          </div>)}
+
+          {/* AI CATALOG (§4: nav secondaria — vista dedicata in Fase 9) */}
+          {activeTab === 'ai-catalog' && (<div className="tab-content ai-catalog-tab">
+            <AiCatalogView />
+          </div>)}
+
+
+          {/* SYSTEM (§4: nav secondaria — vista dedicata in Fase 8) */}
+          {activeTab === 'system' && (<div className="tab-content system-tab">
+            <SystemView
+              projectsCount={projects.length}
+              sessionsByObjective={sessionsByObjective}
+              providers={providers}
+            />
+          </div>)}
+
+
+
+          {/* EVENTS / AUDIT (§4: nav secondaria — cronologia storica esistente, refinement in Fase 10) */}
+
+          {activeTab === 'events-audit' && (<div className="tab-content">
             <section className="card">
               <h2>Cronologia storica</h2>
               <div className="filter-row">
@@ -743,7 +364,7 @@ export default function App() {
                 <ul className="event-list">
                   {historyEvents.map((ev) => (
                     <li key={ev.id}><time>{formatDate(ev.timestamp)}</time><code>{ev.type}</code>
-                      <span>{ev.payload ? JSON.stringify(ev.payload) : ''}</span></li>
+                      <span>{summarizeEventPayload(ev.payload)}</span></li>
                   ))}
                 </ul>
               )}
@@ -753,12 +374,11 @@ export default function App() {
           {activeTab === 'settings' && (<div className="tab-content">
             <SettingsPage onLogout={() => setAuthenticated(false)} version="0.4.0" />
           </div>)}
-        </main>
+          <footer className="footer">
+            <p>Solo rete locale / VPN Tailscale · nessun servizio esterno · SQLite <code>data/gac.sqlite</code></p>
+          </footer>
+        </>
       )}
-      <footer className="footer">
-        <p>Solo rete locale / VPN Tailscale · nessun servizio esterno · SQLite <code>data/gac.sqlite</code></p>
-      </footer>
-      <MobileNav active={activeTab} onChange={setActiveTab} pendingDecisions={pendingDecisions} />
-    </div>
+    </AppShell>
   );
 }

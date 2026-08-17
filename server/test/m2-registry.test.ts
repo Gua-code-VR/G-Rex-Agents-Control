@@ -54,7 +54,7 @@ describe('M2 - registro progetti e stato', () => {
   let repoDir: string;
 
   beforeAll(async () => {
-    built = await buildApp(loadConfig({ GAC_DATA_DIR: dataDir, GAC_LOG_LEVEL: 'silent' }));
+    built = await buildApp(loadConfig({ GAC_DATA_DIR: dataDir, GAC_LOG_LEVEL: 'silent', GAC_AGENT_MODE: 'fake' }));
     repoDir = createGitRepo(dataDir, 'repo-test', 'primo commit di test');
   });
 
@@ -88,10 +88,24 @@ describe('M2 - registro progetti e stato', () => {
       const res = await built.app.inject({ method: 'POST', url: '/api/projects', payload: input });
       expect(res.statusCode).toBe(201);
       const project = res.json().project;
-      expect(project.status).toBe('FERMO');
-      expect(project.statusGroup).toBe('FERMO');
+      // «Crea progetto» con obiettivo iniziale crea l'Objective e lo avvia
+      // subito (IN_LAVORAZIONE); senza obiettivo il progetto resta FERMO.
+      expect(project.status).toBe(input.currentObjective ? 'IN_LAVORAZIONE' : 'FERMO');
+      expect(project.statusGroup).toBe(input.currentObjective ? 'IN_LAVORAZIONE' : 'FERMO');
       expect(project.currentObjective).toBe(input.currentObjective ?? null);
-      expect(project.gitStatus).toBeNull();
+      // Il repository viene associato già in creazione: lo snapshot è presente
+      // anche per percorsi non validi (errore esplicito, mai null).
+      expect(project.gitStatus).not.toBeNull();
+      // L'obiettivo iniziale (se fornito) è stato creato come entità Objective
+      // e avviato automaticamente (senza conferma della selezione).
+      if (input.currentObjective) {
+        expect(res.json().initialObjective).toBeTruthy();
+        expect(res.json().initialObjective.objective.title).toBe(input.currentObjective);
+        expect(res.json().initialObjective.autoStart).toEqual({ started: true });
+        expect(res.json().initialObjective.session.status).toBe('ATTIVA');
+      } else {
+        expect(res.json().initialObjective).toBeNull();
+      }
       created.push(project);
     }
     expect(created).toHaveLength(3);
@@ -157,48 +171,22 @@ describe('M2 - registro progetti e stato', () => {
     expect(missing.statusCode).toBe(404);
   });
 
-  it('imposta lo stato operativo ufficiale e registra la transizione', async () => {
+  it('lo stato operativo è derivato (nessun override manuale)', async () => {
     const res = await built.app.inject({
       method: 'POST',
       url: '/api/projects',
       payload: { name: 'progetto-stato' },
     });
     const id = res.json().project.id as string;
+    expect(res.json().project.status).toBe('FERMO');
 
-    const inLavorazione = await built.app.inject({
+    // L'override manuale dello stato è stato rimosso (§ prodotto): 404.
+    const override = await built.app.inject({
       method: 'PATCH',
       url: `/api/projects/${id}/status`,
       payload: { status: 'IN_LAVORAZIONE' },
     });
-    expect(inLavorazione.statusCode).toBe(200);
-    expect(inLavorazione.json().project.status).toBe('IN_LAVORAZIONE');
-    expect(inLavorazione.json().project.statusGroup).toBe('IN_LAVORAZIONE');
-
-    const problema = await built.app.inject({
-      method: 'PATCH',
-      url: `/api/projects/${id}/status`,
-      payload: { status: 'RICHIEDE_ATTENZIONE' },
-    });
-    expect(problema.statusCode).toBe(200);
-    expect(problema.json().project.statusGroup).toBe('PROBLEMA');
-
-    const invalid = await built.app.inject({
-      method: 'PATCH',
-      url: `/api/projects/${id}/status`,
-      payload: { status: 'CHISSO' },
-    });
-    expect(invalid.statusCode).toBe(400);
-
-    const events = (
-      await built.app.inject({ method: 'GET', url: '/api/events?limit=50' })
-    ).json().events;
-    const transition = events.find(
-      (e: { type: string; payload: { from?: string; to?: string } }) =>
-        e.type === 'project.status_changed' &&
-        e.payload?.from === 'FERMO' &&
-        e.payload?.to === 'IN_LAVORAZIONE',
-    );
-    expect(transition).toBeTruthy();
+    expect(override.statusCode).toBe(404);
   });
 
   it('la dashboard (raggruppamento) distingue fermo / in lavorazione / problema', async () => {
@@ -208,17 +196,10 @@ describe('M2 - registro progetti e stato', () => {
       const res = await built.app.inject({ method: 'POST', url: '/api/projects', payload: { name } });
       ids.push(res.json().project.id as string);
     }
-    // Il primo resta FERMO; il secondo passa IN_LAVORAZIONE; il terzo va in errore.
-    await built.app.inject({
-      method: 'PATCH',
-      url: `/api/projects/${ids[1]}/status`,
-      payload: { status: 'IN_LAVORAZIONE' },
-    });
-    await built.app.inject({
-      method: 'PATCH',
-      url: `/api/projects/${ids[2]}/status`,
-      payload: { status: 'ERRORE' },
-    });
+    // Lo stato è derivato dal ciclo obiettivo; qui si forzano gli stati via DB
+    // per verificare il raggruppamento della dashboard.
+    built.services.db.prepare('UPDATE projects SET status = ? WHERE id = ?').run('IN_LAVORAZIONE', ids[1]);
+    built.services.db.prepare('UPDATE projects SET status = ? WHERE id = ?').run('ERRORE', ids[2]);
 
     const statusRes = await built.app.inject({ method: 'GET', url: '/api/status' });
     const body = statusRes.json();
@@ -316,7 +297,7 @@ describe('M2 - registro progetti e stato', () => {
     const gitRepo = createGitRepo(persistDir, 'repo-persistente', 'commit che deve sopravvivere');
 
     const first: BuiltApp = await buildApp(
-      loadConfig({ GAC_DATA_DIR: persistDir, GAC_LOG_LEVEL: 'silent' }),
+      loadConfig({ GAC_DATA_DIR: persistDir, GAC_LOG_LEVEL: 'silent', GAC_AGENT_MODE: 'fake' }),
     );
 
     const createdA = await first.app.inject({
@@ -329,11 +310,6 @@ describe('M2 - registro progetti e stato', () => {
       },
     });
     const idA = createdA.json().project.id as string;
-    await first.app.inject({
-      method: 'PATCH',
-      url: `/api/projects/${idA}/status`,
-      payload: { status: 'IN_LAVORAZIONE' },
-    });
     await first.app.inject({ method: 'POST', url: `/api/projects/${idA}/git-status` });
 
     const createdB = await first.app.inject({
@@ -354,7 +330,7 @@ describe('M2 - registro progetti e stato', () => {
     first.services.db.close();
 
     const second: BuiltApp = await buildApp(
-      loadConfig({ GAC_DATA_DIR: persistDir, GAC_LOG_LEVEL: 'silent' }),
+      loadConfig({ GAC_DATA_DIR: persistDir, GAC_LOG_LEVEL: 'silent', GAC_AGENT_MODE: 'fake' }),
     );
     try {
       const list = (await second.app.inject({ method: 'GET', url: '/api/projects' })).json()
@@ -382,7 +358,7 @@ describe('M2 - registro progetti e stato', () => {
       expect(a.gitStatus?.lastCommit).toBe('commit che deve sopravvivere');
 
       expect(b.name).toBe('persistente-b');
-      expect(b.status).toBe('FERMO');
+      expect(b.status).toBe('IN_LAVORAZIONE');
       expect(b.currentObjective).toBe('Obiettivo B da ricostruire');
 
       expect(c.name).toBe('persistente-c');
@@ -391,7 +367,8 @@ describe('M2 - registro progetti e stato', () => {
 
       const status = (await second.app.inject({ method: 'GET', url: '/api/status' })).json();
       expect(status.projectsCount).toBe(3);
-      expect(status.projectsByStatus.IN_LAVORAZIONE).toBe(1);
+      expect(status.projectsByStatus.FERMO).toBe(1);
+      expect(status.projectsByStatus.IN_LAVORAZIONE).toBe(2);
     } finally {
       await second.app.close();
       second.services.db.close();

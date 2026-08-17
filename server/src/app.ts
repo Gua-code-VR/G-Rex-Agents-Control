@@ -30,8 +30,14 @@ import { BackupService } from './application/backup-service.js';
 import { StaleSessionDetector, StartupRecoveryService } from './application/stale-detector.js';
 import { GovernanceService } from './application/governance-service.js';
 import { ProviderCatalogService } from './application/provider-catalog-service.js';
+import { PricingCatalogService } from './application/pricing-catalog-service.js';
 import { RuntimeSelectionService } from './application/runtime-selection-service.js';
+import type { PricingProviderEntry } from './domain/pricing.js';
 import { PersistentRetryWorker } from './application/persistent-retry-worker.js';
+import { ExecutionQueueWorker } from './application/execution-queue-worker.js';
+import { WorktreeService } from './application/worktree-service.js';
+import { GitWorktreeManager } from './infrastructure/git/git-worktree-manager.js';
+import { SqliteWorkspaceRepository } from './infrastructure/db/workspace-repo.js';
 import { SqliteRetryJobRepository } from './infrastructure/db/retry-job-repo.js';
 
 export interface AppServices {
@@ -52,6 +58,8 @@ export interface AppServices {
   catalog: ProviderCatalogService;
   runtimeSelector: RuntimeSelectionService;
   retryWorker: PersistentRetryWorker;
+  queueWorker: ExecutionQueueWorker;
+  workspaces: WorktreeService;
 }
 
 export interface BuiltApp {
@@ -59,11 +67,31 @@ export interface BuiltApp {
   services: AppServices;
 }
 
+/** Fallback retro-compatibile (M18/M20): Cline è sempre esposto nel catalogo,
+ *  anche senza GAC_CLINE_MODEL (modelli vuoti → la CLI usa il suo default).
+ *  Questo evita «Runtime non supportato: cline» nella selezione manuale. */
+function fallbackClineProviders(config: AppConfig): PricingProviderEntry[] {
+  return [{
+    id: config.clineProvider,
+    name: config.clineProvider,
+    models: config.clineModel
+      ? [{
+          id: config.clineModel,
+          name: config.clineModel,
+          contextTokens: null,
+          defaultOutputTokens: 4000,
+          pricing: { inputPerMillion: config.clineInputPricePerMillion, outputPerMillion: config.clineOutputPricePerMillion, currency: 'USD' },
+          pricingSchedule: null,
+        }]
+      : [],
+  }];
+}
+
 /** Seleziona l'adapter agente (§8 e §14): fake per demo/test, Cline in produzione. */
-export function buildProviderRegistry(config: AppConfig): ExecutionProviderRegistry {
+export function buildProviderRegistry(config: AppConfig, pricing: PricingCatalogService): ExecutionProviderRegistry {
   return new ExecutionProviderRegistry([
     new FakeProvider(),
-    new ClineProvider(config.clineCommand, config.clineEnabled),
+    new ClineProvider(config.clineCommand, config.clineEnabled, () => pricing.list()),
     new CodexProvider(config.codexCommand, config.codexEnabled, config.codexModel, { inputPerMillion: config.codexInputPricePerMillion, outputPerMillion: config.codexOutputPricePerMillion }),
   ]);
 }
@@ -79,6 +107,21 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const projectRepository = new SqliteProjectRepository(db);
   const projects = new ProjectService(projectRepository, events);
   const gitStatus = new GitStatusService(projectRepository, events);
+  // §19: workspace Git isolate (worktree + branch dedicato). Lifecycle
+  // separato dal ProcessSupervisor e dall'Execution Plane (§29).
+  const workspaces = new WorktreeService(
+    new SqliteWorkspaceRepository(db),
+    new GitWorktreeManager(),
+    events,
+    notifications,
+    {
+      enabled: config.workspacesEnabled,
+      baseDir: config.workspacesDir,
+      branchPrefix: config.workspaceBranchPrefix,
+      integrateOnComplete: config.workspaceIntegrateOnComplete,
+      blockOnDirty: config.workspaceBlockOnDirty,
+    },
+  );
   const objectiveRepository = new SqliteObjectiveRepository(db);
   const sessionRepository = new SqliteSessionRepository(db);
   const checkpointRepository = new SqliteCheckpointRepository(db);
@@ -86,6 +129,15 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   const decisionRepository = new SqliteDecisionRepository(db);
   const attemptsRepository = new SqliteExecutionAttemptRepository(db);
   const retryJobs = new SqliteRetryJobRepository(db);
+  const pricingCatalog = new PricingCatalogService(
+    config.pricingFile,
+    fallbackClineProviders(config),
+    () => new Date(),
+    config.pricingArchiveDir ?? undefined,
+    config.cliProviderMap,
+  );
+  pricingCatalog.startRefreshing(config.pricingRefreshMs);
+  const providers = buildProviderRegistry(config, pricingCatalog);
   const supervisor = new ProcessSupervisor(attemptsRepository, events, { retryMax: config.executionRetryMax, retryBackoffMs: config.executionRetryBackoffMs, fallbackRuntime: config.executionFallbackRuntime, costBudget: config.executionCostBudget });
   const governance = new GovernanceService(db, events, notifications, config.executionCostBudget);
   const decisions = new DecisionService(
@@ -95,8 +147,8 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     sessionRepository,
     projects,
     events,
+    providers,
   );
-  const providers = buildProviderRegistry(config);
   const catalog = new ProviderCatalogService(providers);
   const runtimeSelector = new RuntimeSelectionService(catalog, db);
   const retryWorker = new PersistentRetryWorker(retryJobs, events);
@@ -106,6 +158,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     projects,
     gitStatus,
     events,
+    providers,
     catalog,
     runtimeSelector,
     config.defaultRuntime,
@@ -113,11 +166,12 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
   );
   const backups = new BackupService(config, events);
   const staleDetector = new StaleSessionDetector(
-    sessionRepository, objectiveRepository, projects, notifications, events,
+    sessionRepository, objectiveRepository, projects, notifications, events, providers, checkpoints, supervisor, retryWorker,
     { checkIntervalMs: config.staleCheckIntervalMs },
   );
   const startupRecovery = new StartupRecoveryService(
-    sessionRepository, objectiveRepository, projects, notifications, events,
+    sessionRepository, objectiveRepository, projects, notifications, events, providers,
+    checkpoints, supervisor, retryWorker,
   );
   const agentSessions = new AgentSessionService(
     objectiveRepository,
@@ -131,9 +185,16 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     notifications,
     governance,
     catalog,
+    runtimeSelector,
     retryWorker,
+    workspaces,
   );
   retryWorker.setExecutor((job) => agentSessions.runRetryJob(job));
+
+  // Coda di esecuzione: avvia automaticamente gli obiettivi IN_AVVIO quando
+  // esiste almeno un worker disponibile (§11 CONTROL_ROOM_SPEC).
+  const queueWorker = new ExecutionQueueWorker(sessionRepository, objectiveRepository, providers, events);
+  queueWorker.setExecutor((objectiveId, sessionId) => agentSessions.tryAutoStart(objectiveId, sessionId));
 
   // M7: autenticazione
   const authRepo = new AuthRepository(db);
@@ -196,6 +257,8 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     supervisor,
     governance,
     catalog,
+    queueWorker,
+    workspaces,
   });
 
   return {
@@ -218,6 +281,8 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
       catalog,
       runtimeSelector,
       retryWorker,
+      queueWorker,
+      workspaces,
     },
   };
 }

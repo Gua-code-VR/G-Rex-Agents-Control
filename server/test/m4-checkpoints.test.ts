@@ -11,9 +11,10 @@ import { loadConfig } from '../src/config.js';
  * intervento, blocco ed errore di una sessione agente diventano checkpoint
  * persistenti e comprensibili (PENDING_DECISION) con evidenze classificate
  * §6 (SYSTEM verificato da Agent Control, AGENT dichiarato). Verifica che
- * la conclusione NON approvi l'obiettivo (il COMPLETATO resta alle decisioni
- * umane di M5), che i quattro esiti generino checkpoint corretti, l'esposizione
- * via API e il contatore decisioni in /api/status, e la persistenza al riavvio.
+ * la conclusione riuscita NON generi checkpoint né approvazione umana
+ * (COMPLETATO automatico, §4.1 V2), che intervento/blocco/errore generino
+ * checkpoint corretti, l'esposizione via API e il contatore decisioni in
+ * /api/status, e la persistenza al riavvio.
  */
 
 let hasGit = true;
@@ -100,7 +101,7 @@ describe('M4 - checkpoint e attenzione umana', () => {
     expect(res.statusCode).toBe(200);
   }
 
-  it.skipIf(!hasGit)('conclusione: sessione COMPLETATA, obiettivo RICHIEDE_ATTENZIONE, checkpoint COMPLETED con evidenze SYSTEM+AGENT', async () => {
+  it.skipIf(!hasGit)('conclusione: sessione COMPLETATA, obiettivo COMPLETATO automaticamente (report e snapshot Git finali)', async () => {
     const repoDir = createGitRepo(dataDir, 'repo-m4-complete', 'commit iniziale M4');
     const projectId = await newProject('m4-complete', repoDir);
     const { objectiveId, sessionId } = await newObjective(projectId, 'Concludere il lavoro');
@@ -138,35 +139,15 @@ describe('M4 - checkpoint e attenzione umana', () => {
     const { objective, session, project, checkpoint } = res.json();
 
     expect(session.status).toBe('COMPLETATA');
-    // M4: la conclusione NON è l'approvazione; il COMPLETATO arriva con M5.
-    expect(objective.status).toBe('RICHIEDE_ATTENZIONE');
-    expect(objective.completedAt).toBeNull();
+    // Completamento riuscito: stato terminale automatico (§ prodotto).
+    expect(objective.status).toBe('COMPLETATO');
+    expect(objective.completedAt).toBeTruthy();
     expect(objective.finalReport).toBe('Implementata la fondazione M4 con i checkpoint.');
     expect(objective.gitEnd?.branch).toBe('main');
-    expect(project.status).toBe('RICHIEDE_ATTENZIONE');
+    expect(project.status).toBe('FERMO');
 
-    // Il checkpoint: comprensibile senza log grezzo e in attesa di decisione.
-    expect(checkpoint).not.toBeNull();
-    expect(checkpoint.status).toBe('PENDING_DECISION');
-    expect(checkpoint.outcome).toBe('COMPLETED');
-    expect(checkpoint.objectiveId).toBe(objectiveId);
-    expect(checkpoint.sessionId).toBe(sessionId);
-    expect(checkpoint.summary).toBe('Fondazione M4 implementata e verificata.');
-    expect(checkpoint.acceptanceStatus).toBe('MET');
-    expect(checkpoint.testsSummary).toBe('16 test verdi.');
-    expect(checkpoint.warnings).toEqual(['Nessuna avvertenza']);
-    expect(checkpoint.recommendedAction).toBe('Procedere con la revisione umana.');
-    expect(checkpoint.fullReportReference).toBe(`objective:${objectiveId}:final_report`);
-    // §6: SYSTEM (verificato) + AGENT (dichiarato).
-    expect(checkpoint.evidenceSources).toEqual(['SYSTEM', 'AGENT']);
-
-    // Evidenze SYSTEM: il delta Git è calcolato da Agent Control, non dichiarato.
-    expect(checkpoint.gitDelta).not.toBeNull();
-    expect(checkpoint.gitDelta?.commitChanged).toBe(true);
-    expect(checkpoint.gitDelta?.fromHead).not.toBe(checkpoint.gitDelta?.toHead);
-    expect(checkpoint.gitDelta?.dirty).toBe(true);
-    expect(checkpoint.evidenceSummary).toContain('Sessione agente: COMPLETATA');
-    expect(checkpoint.evidenceSummary).toContain('HEAD avanzato');
+    // Nessun checkpoint pendente per un completamento riuscito.
+    expect(checkpoint).toBeNull();
   });
 
   it('richiesta di intervento: lo stop genera un checkpoint INTERRUPTED', async () => {
@@ -240,8 +221,12 @@ describe('M4 - checkpoint e attenzione umana', () => {
     expect(project.status).toBe('ERRORE');
     expect(checkpoint.outcome).toBe('ERROR');
     expect(checkpoint.status).toBe('PENDING_DECISION');
-    expect(checkpoint.summary).toBe('Il processo agente è terminato con exit code 1');
-    expect(checkpoint.recommendedAction).toBe('Verifica il problema tecnico e decidi come procedere.');
+    // M19: il messaggio principale è tradotto in linguaggio comprensibile;
+    // i dettagli tecnici grezzi restano separati dietro «Dettagli tecnici».
+    expect(checkpoint.summary).not.toContain('exit code');
+    expect(checkpoint.summary).toContain('errore durante');
+    expect(checkpoint.technicalDetails).toBe('Il processo agente è terminato con exit code 1');
+    expect(checkpoint.recommendedAction).toContain('Riprova');
     expect(checkpoint.evidenceSources).toEqual(['SYSTEM']);
   });
 
@@ -249,7 +234,6 @@ describe('M4 - checkpoint e attenzione umana', () => {
     const all = await built.app.inject({ method: 'GET', url: '/api/checkpoints?limit=100' });
     expect(all.statusCode).toBe(200);
     const outcomes = (all.json().checkpoints as Array<{ outcome: string }>).map((c) => c.outcome);
-    expect(outcomes).toContain('COMPLETED');
     expect(outcomes).toContain('INTERRUPTED');
     expect(outcomes).toContain('BLOCKED');
     expect(outcomes).toContain('ERROR');
@@ -258,12 +242,12 @@ describe('M4 - checkpoint e attenzione umana', () => {
       method: 'GET',
       url: '/api/checkpoints?status=PENDING_DECISION',
     });
-    expect((pending.json().checkpoints as unknown[]).length).toBeGreaterThanOrEqual(4);
+    expect((pending.json().checkpoints as unknown[]).length).toBeGreaterThanOrEqual(3);
 
     const status = (await built.app.inject({ method: 'GET', url: '/api/status' })).json() as {
       pendingDecisions: number;
     };
-    expect(status.pendingDecisions).toBeGreaterThanOrEqual(4);
+    expect(status.pendingDecisions).toBeGreaterThanOrEqual(3);
 
     // I checkpoint sono esposti anche per obiettivo (404 se inesistente).
     const missing = await built.app.inject({
@@ -277,7 +261,7 @@ describe('M4 - checkpoint e attenzione umana', () => {
     const events = (await built.app.inject({ method: 'GET', url: '/api/events?limit=100' })).json()
       .events as Array<{ type: string }>;
     const checkpointEvents = events.filter((e) => e.type === 'checkpoint.created');
-    expect(checkpointEvents.length).toBeGreaterThanOrEqual(4);
+    expect(checkpointEvents.length).toBeGreaterThanOrEqual(3);
   });
 
   it('persiste i checkpoint e il contatore decisioni attraverso il riavvio', async () => {
@@ -305,12 +289,12 @@ describe('M4 - checkpoint e attenzione umana', () => {
       method: 'POST',
       url: `/api/objectives/${objectiveId}/sessions/${sessionId}/start`,
     });
-    const completed = await first.app.inject({
+    const blocked = await first.app.inject({
       method: 'POST',
-      url: `/api/objectives/${objectiveId}/complete`,
-      payload: { report: 'Concluso prima del riavvio.' },
+      url: `/api/objectives/${objectiveId}/block`,
+      payload: { reason: 'Blocco prima del riavvio.' },
     });
-    const checkpointId = completed.json().checkpoint.id as string;
+    const checkpointId = blocked.json().checkpoint.id as string;
 
     await first.app.close();
     first.services.db.close();
@@ -327,7 +311,7 @@ describe('M4 - checkpoint e attenzione umana', () => {
       }>;
       expect(checkpoints).toHaveLength(1);
       expect(checkpoints[0].id).toBe(checkpointId);
-      expect(checkpoints[0].outcome).toBe('COMPLETED');
+      expect(checkpoints[0].outcome).toBe('BLOCKED');
       expect(checkpoints[0].status).toBe('PENDING_DECISION');
 
       const status = (await second.app.inject({ method: 'GET', url: '/api/status' })).json() as {
@@ -337,7 +321,7 @@ describe('M4 - checkpoint e attenzione umana', () => {
 
       const detail = await second.app.inject({ method: 'GET', url: `/api/objectives/${objectiveId}` });
       const detailBody = detail.json() as { objective: { status: string }; checkpoints: unknown[] };
-      expect(detailBody.objective.status).toBe('RICHIEDE_ATTENZIONE');
+      expect(detailBody.objective.status).toBe('BLOCCATO');
       expect(detailBody.checkpoints).toHaveLength(1);
     } finally {
       await second.app.close();

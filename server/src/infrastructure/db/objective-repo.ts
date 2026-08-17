@@ -89,6 +89,7 @@ function toSession(row: SessionRow): AgentSession {
     heartbeatIntervalMs: row.heartbeat_interval_ms ?? 30000,
     lastHeartbeatAt: row.last_heartbeat_at,
     executionSelection: parseSelection(row.selection_json),
+    workspaceId: row.workspace_id ?? null,
   };
 }
 
@@ -108,6 +109,8 @@ export interface ObjectiveRepository {
   setGitEnd(id: string, gitEnd: GitStatus | null): Objective | null;
   /** M5: chiude l'obiettivo come COMPLETATO (approvazione umana). */
   complete(id: string): Objective | null;
+  /** Completamento riuscito (§ prodotto): COMPLETATO con report e snapshot Git finali, senza approvazione. */
+  completeWithReport(id: string, report: string, gitEnd: GitStatus | null): Objective | null;
 }
 
 export interface SessionRepository {
@@ -120,6 +123,8 @@ export interface SessionRepository {
   listAll(): AgentSession[];
   setStatus(id: string, status: SessionStatus): AgentSession | null;
   setProcessReference(id: string, processReference: string, agentType?: string): AgentSession | null;
+  /** §19: associa la sessione alla workspace Git isolata che esegue il lavoro. */
+  setWorkspaceId(id: string, workspaceId: string | null): AgentSession | null;
   touchActivity(id: string): AgentSession | null;
   /** M8: Aggiorna l'ultimo heartbeat della sessione. */
   touchHeartbeat(id: string): AgentSession | null;
@@ -140,6 +145,7 @@ interface SessionRow {
   heartbeat_interval_ms: number | null;
   last_heartbeat_at: string | null;
   selection_json: string | null;
+  workspace_id: string | null;
 }
 function parseSelection(raw: string | null): ExecutionSelection | null { try { const value = raw ? JSON.parse(raw) as ExecutionSelection : null; return value?.runtimeId && value.providerId ? value : null; } catch { return null; } }
 
@@ -155,6 +161,7 @@ export class SqliteObjectiveRepository implements ObjectiveRepository {
   private readonly concludeStmt: StatementSync;
   private readonly setGitEndStmt: StatementSync;
   private readonly completeStmt: StatementSync;
+  private readonly completeWithReportStmt: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.insertStmt = db.prepare(
@@ -193,6 +200,9 @@ export class SqliteObjectiveRepository implements ObjectiveRepository {
     );
     this.completeStmt = db.prepare(
       `UPDATE objectives SET status = 'COMPLETATO', completed_at = ?, updated_at = ? WHERE id = ?`,
+    );
+    this.completeWithReportStmt = db.prepare(
+      `UPDATE objectives SET status = 'COMPLETATO', final_report = ?, git_end = ?, completed_at = ?, updated_at = ? WHERE id = ?`,
     );
   }
 create(projectId: string, input: CreateObjectiveInput): Objective {
@@ -266,6 +276,13 @@ create(projectId: string, input: CreateObjectiveInput): Objective {
     this.completeStmt.run(now, now, id);
     return this.getById(id);
   }
+
+  completeWithReport(id: string, report: string, gitEnd: GitStatus | null): Objective | null {
+    if (!this.getById(id)) return null;
+    const now = new Date().toISOString();
+    this.completeWithReportStmt.run(report, gitEnd ? JSON.stringify(gitEnd) : null, now, now, id);
+    return this.getById(id);
+  }
 }
 /** Repository SQLite per l'entità AgentSession (§5). */
 export class SqliteSessionRepository implements SessionRepository {
@@ -281,6 +298,7 @@ export class SqliteSessionRepository implements SessionRepository {
   private readonly touchHeartbeatStmt: StatementSync;
   private readonly findStaleStmt: StatementSync;
   private readonly terminateStmt: StatementSync;
+  private readonly setWorkspaceIdStmt: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.insertStmt = db.prepare(
@@ -315,6 +333,7 @@ export class SqliteSessionRepository implements SessionRepository {
          AND last_heartbeat_at IS NOT NULL
          AND (julianday(?) - julianday(last_heartbeat_at)) * 86400000 > heartbeat_interval_ms`,
     );
+    this.setWorkspaceIdStmt = db.prepare('UPDATE sessions SET workspace_id = ? WHERE id = ?');
     this.terminateStmt = db.prepare(
       'UPDATE sessions SET ended_at = ?, status = ?, exit_reason = ? WHERE id = ?',
     );
@@ -373,6 +392,12 @@ export class SqliteSessionRepository implements SessionRepository {
     const existing = this.getById(id);
     if (!existing) return null;
     this.setRefStmt.run(processReference, agentType ?? existing.agentType, id);
+    return this.getById(id);
+  }
+
+  setWorkspaceId(id: string, workspaceId: string | null): AgentSession | null {
+    if (!this.getById(id)) return null;
+    this.setWorkspaceIdStmt.run(workspaceId, id);
     return this.getById(id);
   }
 

@@ -12,6 +12,7 @@ import type { ProjectService } from './project-service.js';
 import type { CheckpointRepository } from '../infrastructure/db/checkpoint-repo.js';
 import type { DecisionRepository } from '../infrastructure/db/decision-repo.js';
 import type { ObjectiveRepository, SessionRepository } from '../infrastructure/db/objective-repo.js';
+import type { ExecutionProviderRegistry } from '../integrations/execution-provider.js';
 
 export const EVENT_DECISION_MADE = 'decision.made';
 
@@ -43,6 +44,7 @@ export class DecisionService {
     private readonly sessions: SessionRepository,
     private readonly projects: ProjectService,
     private readonly events: EventService,
+    private readonly providers: ExecutionProviderRegistry,
   ) {}
 
   decide(checkpointId: string, input: unknown): DecisionResult {
@@ -115,6 +117,10 @@ export class DecisionService {
         this.projects.setCurrentObjective(objective.projectId, null, null);
         return this.objectives.getById(objective.id)!;
       }
+      case 'RETRY': {
+        this.terminateOpenSessions(objective.id, 'Riprova avviata');
+        return this.objectives.setStatus(objective.id, targetStatus)!;
+      }
     }
   }
 
@@ -127,6 +133,10 @@ export class DecisionService {
   private terminateOpenSessions(objectiveId: string, reason: string): void {
     for (const session of this.sessions.listByObjective(objectiveId)) {
       if (session.status === 'IN_AVVIO' || session.status === 'ATTIVA') {
+        if (session.status === 'ATTIVA') {
+          const provider = this.providers.get(session.agentType);
+          if (provider) void provider.stop(session.processReference ?? session.id).catch(() => undefined);
+        }
         this.sessions.terminate(session.id, 'INTERROTTA', reason);
       }
     }

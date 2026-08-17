@@ -27,7 +27,7 @@ function createGitRepo(baseDir: string, name: string): string {
   return repoDir;
 }
 
-describe('M5 - Approvazione e prosecuzione', () => {
+describe('M5 - Decisioni e completamento automatico', () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gac-m5-'));
   let built: BuiltApp;
 
@@ -58,10 +58,13 @@ describe('M5 - Approvazione e prosecuzione', () => {
     expect(res.statusCode).toBe(200);
   }
 
-  async function completeObjective(objectiveId: string): Promise<string> {
+  // Completamento riuscito: stato terminale automatico, nessun checkpoint pendente.
+  async function completeObjective(objectiveId: string): Promise<void> {
     const res = await built.app.inject({ method: 'POST', url: `/api/objectives/${objectiveId}/complete`, payload: { summary: 'Lavoro completato.' } });
     expect(res.statusCode).toBe(200);
-    return res.json().checkpoint.id as string;
+    expect(res.json().checkpoint).toBeNull();
+    expect(res.json().objective.status).toBe('COMPLETATO');
+    expect(res.json().objective.finalReport).toBeTruthy();
   }
 
   async function blockObjective(objectiveId: string): Promise<string> {
@@ -76,23 +79,24 @@ describe('M5 - Approvazione e prosecuzione', () => {
     return res.json().checkpoint.id as string;
   }
 
-  // AC1: APPROVE chiude checkpoint e obiettivo
-  it('AC1 - APPROVE chiude checkpoint e obiettivo', async () => {
-    const pid = await newProject('M5 Approve T');
-    const { objectiveId, sessionId } = await newObjective(pid, 'Approva');
+  // AC1: completamento riuscito → COMPLETATO automatico, senza approvazione umana.
+  it('AC1 - il completamento riuscito chiude automaticamente obiettivo e progetto', async () => {
+    const pid = await newProject('M5 Auto T');
+    const { objectiveId, sessionId } = await newObjective(pid, 'Completa');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
 
-    const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE', note: 'Ottimo!' } });
-    expect(res.statusCode).toBe(200);
-    const b = res.json();
-    expect(b.checkpoint.status).toBe('DECIDED');
-    expect(b.checkpoint.decisionType).toBe('APPROVE');
-    expect(b.checkpoint.decidedAt).toBeTruthy();
-    expect(b.decision.note).toBe('Ottimo!');
-    expect(b.objective.status).toBe('COMPLETATO');
-    expect(b.objective.completedAt).toBeTruthy();
-    expect(b.project.status).toBe('COMPLETATO');
+    await completeObjective(objectiveId);
+
+    const oRes = await built.app.inject({ method: 'GET', url: `/api/objectives/${objectiveId}` });
+    expect(oRes.json().objective.status).toBe('COMPLETATO');
+    expect(oRes.json().objective.completedAt).toBeTruthy();
+    expect(oRes.json().objective.finalReport).toBeTruthy();
+
+    const pRes = await built.app.inject({ method: 'GET', url: `/api/projects/${pid}` });
+    expect(pRes.json().project.status).toBe('FERMO');
+
+    const cRes = await built.app.inject({ method: 'GET', url: `/api/objectives/${objectiveId}/checkpoints` });
+    expect(cRes.json().checkpoints.filter((c: { status: string }) => c.status === 'PENDING_DECISION')).toHaveLength(0);
   });
 
   // AC2: REQUEST_CHANGES lascia RICHIEDE_ATTENZIONE
@@ -100,7 +104,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 ReqChg T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Modifiche');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'REQUEST_CHANGES', note: 'Manca doc.' } });
     expect(res.statusCode).toBe(200);
@@ -116,7 +120,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 Stop T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Ferma');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'STOP', note: 'Pausa.' } });
     expect(res.statusCode).toBe(200);
@@ -131,7 +135,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 Cancel T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Annulla');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'CANCEL' } });
     expect(res.statusCode).toBe(200);
@@ -146,7 +150,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 NoNote T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Senza nota');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE' } });
     expect(res.statusCode).toBe(200);
@@ -158,7 +162,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 Inv1 T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Irreversibile');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const r1 = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE' } });
     expect(r1.statusCode).toBe(200);
@@ -180,7 +184,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 Invalid T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Errore tipo');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'INVALID' } });
     expect(res.statusCode).toBe(400);
@@ -191,11 +195,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 D5 T');
     const { objectiveId, sessionId } = await newObjective(pid, 'D5 test');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
-
-    const ar = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE' } });
-    expect(ar.statusCode).toBe(200);
-    expect(ar.json().objective.status).toBe('COMPLETATO');
+    await completeObjective(objectiveId);
 
     const cr = await built.app.inject({ method: 'POST', url: `/api/objectives/${objectiveId}/cancel` });
     expect(cr.statusCode).toBe(400);
@@ -207,7 +207,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 Append T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Append');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE', note: 'Storico' } });
     expect(res.statusCode).toBe(200);
@@ -224,7 +224,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 Status T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Status');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const b = await built.app.inject({ method: 'GET', url: '/api/status' });
     const before = b.json().pendingDecisions as number;
@@ -240,12 +240,11 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 Event T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Event');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const beforeRes = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE' } });
     expect(beforeRes.statusCode).toBe(200);
 
-    // Verifica che l'ultimo evento sia decision.made
     const events = await built.app.inject({ method: 'GET', url: '/api/events?limit=200' });
     const allEvents = events.json().events as Array<{ type: string; payload: string }>;
     expect(allEvents.length).toBeGreaterThan(0);
@@ -259,7 +258,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const pid = await newProject('M5 Cancel Sess T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Sessione attiva');
     await startSession(objectiveId, sessionId);
-    const cid = await completeObjective(objectiveId);
+    const cid = await errorObjective(objectiveId);
 
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'CANCEL' } });
     expect(res.statusCode).toBe(200);
@@ -282,7 +281,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE' } });
     expect(res.statusCode).toBe(200);
     expect(res.json().objective.status).toBe('COMPLETATO');
-    expect(res.json().project.status).toBe('COMPLETATO');
+    expect(res.json().project.status).toBe('FERMO');
   });
 
   it('AC15 - APPROVE su checkpoint ERROR chiude obiettivo', async () => {
@@ -294,7 +293,7 @@ describe('M5 - Approvazione e prosecuzione', () => {
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE' } });
     expect(res.statusCode).toBe(200);
     expect(res.json().objective.status).toBe('COMPLETATO');
-    expect(res.json().project.status).toBe('COMPLETATO');
+    expect(res.json().project.status).toBe('FERMO');
   });
 
   it('AC16 - REQUEST_CHANGES su checkpoint ERROR lascia obiettivo RICHIEDE_ATTENZIONE', async () => {

@@ -16,6 +16,22 @@ export interface AppConfig {
   clineCommand: string;
   /** True se l'integrazione Cline è abilitata (GAC_CLINE_ENABLED). */
   clineEnabled: boolean;
+  /** ID del provider API usato dalla CLI Cline (GAC_CLINE_PROVIDER). */
+  clineProvider: string;
+  /** Modello Cline predefinito, se esplicitato (GAC_CLINE_MODEL). */
+  clineModel: string | null;
+  clineInputPricePerMillion: number | null;
+  clineOutputPricePerMillion: number | null;
+  /** File JSON dei provider diretti Cline (M18); assente → fallback alle env singole. */
+  pricingFile: string;
+  /** Intervallo (ms) di rilettura del file prezzi (0 = refresh disabilitato). */
+  pricingRefreshMs: number;
+  /** Directory dell'archivio G-Rex Pricing (fonte unica dei prezzi).
+   *  Default: `<dataDir>/g-rex-pricing-archive`; l'archivio, quando presente,
+   *  prende la precedenza sul file `pricing.json` (che resta solo fallback). */
+  pricingArchiveDir: string | null;
+  /** Mappa archivio → chiave provider CLI Cline (solo i provider realmente configurati). */
+  cliProviderMap: Record<string, string>;
   /** Runtime predefinito; ogni obiettivo può selezionarne uno diverso. */
   defaultRuntime: string;
   codexCommand: string;
@@ -32,8 +48,21 @@ export interface AppConfig {
   sessionTtlDays: number;
   /** true se il server deve bindare su 0.0.0.0 (per Tailscale/VPN). */
   bindAll: boolean;
+  /** Indirizzo di bind effettivo (GAC_BIND_ADDRESS > GAC_BIND_ALL > GAC_HOST). */
+  bindAddress: string;
   heartbeatIntervalMs: number;
   staleCheckIntervalMs: number;
+  // §19: workspace Git isolate (worktree + branch dedicato)
+  /** True se le esecuzioni lavorano in workspace isolate (GAC_WORKSPACES_ENABLED). */
+  workspacesEnabled: boolean;
+  /** Directory base delle workspace isolate (GAC_WORKSPACES_DIR, default <dataDir>/workspaces). */
+  workspacesDir: string;
+  /** Prefisso dei branch dedicati (GAC_WORKSPACE_BRANCH_PREFIX, default `gac/objective/`). */
+  workspaceBranchPrefix: string;
+  /** Integrazione automatica al completamento quando sicura (GAC_WORKSPACE_INTEGRATE_ON_COMPLETE). */
+  workspaceIntegrateOnComplete: boolean;
+  /** Blocca la creazione della workspace se la working tree principale è sporca (§19.3). */
+  workspaceBlockOnDirty: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -53,6 +82,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   // l'adapter simulato per demo senza CLI installata e per i test.
   const clineCommand = env.GAC_CLINE_COMMAND?.trim() || 'cline';
   const clineEnabled = env.GAC_CLINE_ENABLED !== 'false';
+  const clineProvider = env.GAC_CLINE_PROVIDER?.trim() || 'cline';
+  const clineModel = env.GAC_CLINE_MODEL?.trim() || null;
+  const clineInputPricePerMillion = nonNegativeNumber(env.GAC_CLINE_INPUT_PRICE_PER_MILLION);
+  const clineOutputPricePerMillion = nonNegativeNumber(env.GAC_CLINE_OUTPUT_PRICE_PER_MILLION);
   // Compatibilità M3: GAC_AGENT_MODE resta un alias del runtime predefinito.
   const defaultRuntime = env.GAC_DEFAULT_RUNTIME?.trim() || env.GAC_AGENT_MODE?.trim() || 'cline';
   const codexCommand = env.GAC_CODEX_COMMAND?.trim() || 'codex';
@@ -60,6 +93,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const codexModel = env.GAC_CODEX_MODEL?.trim() || null;
   const codexInputPricePerMillion = nonNegativeNumber(env.GAC_CODEX_INPUT_PRICE_PER_MILLION);
   const codexOutputPricePerMillion = nonNegativeNumber(env.GAC_CODEX_OUTPUT_PRICE_PER_MILLION);
+  // M18: file prezzi dichiarati (provider diretti), riletto periodicamente.
+  const pricingFile = env.GAC_PRICING_FILE?.trim() ? path.resolve(env.GAC_PRICING_FILE) : path.join(dataDir, 'pricing.json');
+  const rawPricingRefresh = Number(env.GAC_PRICING_REFRESH_MS ?? 60_000);
+  const pricingRefreshMs = Number.isFinite(rawPricingRefresh) && rawPricingRefresh >= 0 ? Math.trunc(rawPricingRefresh) : 60_000;
+  // Archivio G-Rex Pricing: fonte unica dei prezzi (prende la precedenza sul file).
+  // Default `<dataDir>/g-rex-pricing-archive`: la distribuzione standard colloca
+  // qui l'archivio prodotto da G-Rex Pricing, così il runtime lo consuma davvero.
+  // Se l'archivio è assente o non valido, `PricingCatalogService` ricade sul file.
+  const pricingArchiveDir = env.GAC_PRICING_ARCHIVE_DIR?.trim() ? path.resolve(env.GAC_PRICING_ARCHIVE_DIR) : path.join(dataDir, 'g-rex-pricing-archive');
+  const cliProviderMap = parseCliProviderMap(env.GAC_PRICING_CLI_PROVIDER_MAP);
   const executionRetryMax = boundedInt(env.GAC_EXECUTION_RETRY_MAX, 1, 0, 5);
   const executionRetryBackoffMs = positiveMs(env.GAC_EXECUTION_RETRY_BACKOFF_MS, 1_000);
   const executionFallbackRuntime = env.GAC_EXECUTION_FALLBACK_RUNTIME?.trim() || null;
@@ -69,8 +112,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const rawTtl = Number(env.GAC_SESSION_TTL_DAYS ?? 30);
   const sessionTtlDays = Number.isFinite(rawTtl) && rawTtl >= 1 ? rawTtl : 30;
   const bindAll = env.GAC_BIND_ALL === 'true';
+  // Bind address esplicito (Tailscale/VPN): GAC_BIND_ADDRESS prevale, poi
+  // GAC_BIND_ALL (alias booleano per 0.0.0.0), poi GAC_HOST legacy, poi loopback.
+  const bindAddress = env.GAC_BIND_ADDRESS?.trim() || (bindAll ? '0.0.0.0' : host);
   const heartbeatIntervalMs = positiveMs(env.GAC_HEARTBEAT_INTERVAL_MS, 30_000);
   const staleCheckIntervalMs = positiveMs(env.GAC_STALE_CHECK_INTERVAL_MS, 30_000);
+
+  // §19: workspace Git isolate (worktree + branch dedicato). Default attivo:
+  // gli agenti concorrenti non lavorano direttamente sulla working tree
+  // principale (§27). Il provisioning degrada in modo sicuro quando il
+  // repository non è Git o il percorso non esiste (fallback al comportamento
+  // precedente), mentre una working tree principale sporca blocca l'avvio (§19.3).
+  const workspacesEnabled = env.GAC_WORKSPACES_ENABLED !== 'false';
+  const workspacesDir = env.GAC_WORKSPACES_DIR?.trim()
+    ? path.resolve(env.GAC_WORKSPACES_DIR)
+    : path.join(dataDir, 'workspaces');
+  const workspaceBranchPrefix = env.GAC_WORKSPACE_BRANCH_PREFIX?.trim() || 'gac/objective/';
+  const workspaceIntegrateOnComplete = env.GAC_WORKSPACE_INTEGRATE_ON_COMPLETE !== 'false';
+  const workspaceBlockOnDirty = env.GAC_WORKSPACE_BLOCK_ON_DIRTY !== 'false';
 
   return {
     host,
@@ -80,26 +139,55 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     logLevel,
     clineCommand,
     clineEnabled,
+    clineProvider,
+    clineModel,
+    clineInputPricePerMillion,
+    clineOutputPricePerMillion,
     defaultRuntime,
     codexCommand,
     codexEnabled,
     codexModel,
     codexInputPricePerMillion,
     codexOutputPricePerMillion,
+    pricingFile,
+    pricingRefreshMs,
+    pricingArchiveDir,
+    cliProviderMap,
     executionRetryMax,
     executionRetryBackoffMs,
     executionFallbackRuntime,
     executionCostBudget,
     sessionTtlDays,
     bindAll,
+    bindAddress,
     heartbeatIntervalMs,
     staleCheckIntervalMs,
+    workspacesEnabled,
+    workspacesDir,
+    workspaceBranchPrefix,
+    workspaceIntegrateOnComplete,
+    workspaceBlockOnDirty,
   };
 }
 
 function positiveMs(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 1_000 && parsed <= 86_400_000 ? Math.trunc(parsed) : fallback;
+}
+
+/**
+ * Mappa archivio G-Rex Pricing → chiave provider CLI Cline, in formato
+ * `archivio=cli` separato da virgola (es. `qwen=openai-compatible,deepseek=deepseek`).
+ * Default: Qwen (`qwen` → `openai-compatible`) e DeepSeek (`deepseek` → `deepseek`).
+ */
+function parseCliProviderMap(raw: string | undefined): Record<string, string> {
+  const map: Record<string, string> = { qwen: 'openai-compatible', deepseek: 'deepseek' };
+  if (!raw) return map;
+  for (const pair of raw.split(',')) {
+    const [key, value] = pair.split('=');
+    if (key?.trim() && value?.trim()) map[key.trim()] = value.trim();
+  }
+  return map;
 }
 
 function boundedInt(value: string | undefined, fallback: number, min: number, max: number): number {

@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { ExecutionProviderRegistry, ExecutionResult } from '../integrations/execution-provider.js';
-import type { AgentSession, Objective } from '../domain/objective.js';
-import { blockSessionSchema, stopSessionSchema } from '../domain/objective.js';
+import type { ExecutionEvent, ExecutionProviderRegistry, ExecutionResult } from '../integrations/execution-provider.js';
+import type { AgentSession, ExecutionSelection, Objective } from '../domain/objective.js';
+import { blockSessionSchema, objectiveStatusToProjectStatus, stopSessionSchema } from '../domain/objective.js';
 import { checkpointAgentSchema, type Checkpoint } from '../domain/checkpoint.js';
 import type { EventService } from './event-service.js';
 import type { GitStatusService } from './git-status-service.js';
@@ -14,10 +14,12 @@ import type { ProcessSupervisor } from './process-supervisor.js';
 import type { Project } from '../domain/project.js';
 import type { CheckpointService } from './checkpoint-service.js';
 import type { NotificationService } from './notification-service.js';
-import { classifyError } from './error-classifier.js';
+import { classifyError, translateTechnicalError } from './error-classifier.js';
 import type { GovernanceService } from './governance-service.js';
 import type { ProviderCatalogService } from './provider-catalog-service.js';
+import type { RuntimeSelectionService } from './runtime-selection-service.js';
 import type { PersistentRetryWorker } from './persistent-retry-worker.js';
+import { WorktreeError, type WorktreeService } from './worktree-service.js';
 import type { RetryJob } from '../domain/retry-job.js';
 
 export const EVENT_SESSION_STARTED = 'session.started';
@@ -55,6 +57,26 @@ export interface SessionTransition {
   checkpoint: Checkpoint | null;
 }
 
+/** Esito di un tentativo di avvio automatico dalla coda di esecuzione. */
+export interface AutoStartResult {
+  started: boolean;
+  /** Transizione aggiornata solo quando started=true. */
+  transition: SessionTransition | null;
+  /** true se start() ha lanciato (es. governance): la coda applica un cooldown. */
+  failed?: boolean;
+}
+
+/** Richiesta di approvazione runtime in attesa di decisione umana (§19 spec). */
+export interface RuntimeApproval {
+  requestId: string;
+  objectiveId: string;
+  sessionId: string;
+  processReference: string | null;
+  action: string;
+  detail: string | null;
+  requestedAt: string;
+}
+
 /**
  * Ciclo di vita delle sessioni agente (§5 e §4): avvio con delega
  * all'adapter, stop controllato che porta l'obiettivo a
@@ -79,16 +101,63 @@ export class AgentSessionService {
     private readonly notifications?: NotificationService,
     private readonly governance?: GovernanceService,
     private readonly catalog?: ProviderCatalogService,
+    private readonly runtimeSelector?: RuntimeSelectionService,
     private readonly retryWorker?: PersistentRetryWorker,
+    private readonly worktrees?: WorktreeService,
   ) {}
 
+  private readonly runtimeApprovals = new Map<string, RuntimeApproval>();
+
+  /** Registra una richiesta di approvazione runtime inoltrata dal provider. */
+  private registerRuntimeApproval(objectiveId: string, sessionId: string, processReference: string | null, event: ExecutionEvent): void {
+    if (!event.approval) return;
+    const { requestId, action, detail } = event.approval;
+    this.runtimeApprovals.set(requestId, { requestId, objectiveId, sessionId, processReference, action, detail, requestedAt: new Date().toISOString() });
+    this.events.log('runtime.approval.requested', { category: 'AGENT', objectiveId, sessionId, payload: { requestId, action, detail } });
+    this.notifications?.notify({
+      type: 'CHECKPOINT_DECISION_REQUIRED',
+      severity: 'warning',
+      title: 'Approvazione runtime richiesta',
+      message: `L'agente chiede di eseguire: ${action}${detail ? ` — ${detail}` : ''}.`,
+      objectiveId,
+      sessionId,
+      metadata: { requestId, action, detail },
+    });
+  }
+
+  /** Elenco delle approvazioni runtime pendenti (§10/§19 spec). */
+  listRuntimeApprovals(): RuntimeApproval[] {
+    return [...this.runtimeApprovals.values()].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
+  }
+
+  /** Decide una richiesta di approvazione runtime e risponde al processo. */
+  async decideRuntimeApproval(requestId: string, approved: boolean): Promise<{ requestId: string; approved: boolean } | null> {
+    const approval = this.runtimeApprovals.get(requestId);
+    if (!approval) return null;
+    this.runtimeApprovals.delete(requestId);
+    const session = this.sessions.getById(approval.sessionId);
+    const provider = session ? this.providers.get(session.agentType) : null;
+    if (provider?.respondApproval && approval.processReference) {
+      await provider.respondApproval(approval.processReference, requestId, approved);
+    }
+    this.events.log('runtime.approval.decided', { category: 'USER', objectiveId: approval.objectiveId, sessionId: approval.sessionId, payload: { requestId, approved } });
+    return { requestId, approved };
+  }
+
   /** Avvia la sessione (IN_AVVIO → ATTIVA) e porta obiettivo e progetto IN_LAVORAZIONE. */
-  async start(objectiveId: string, sessionId: string): Promise<SessionTransition> {
+  async start(
+    objectiveId: string,
+    sessionId: string,
+    selectionOverride?: Partial<ExecutionSelection> & { runtimeId: string },
+  ): Promise<SessionTransition> {
     const objective = this.objectives.getById(objectiveId);
     if (!objective) throw new SessionStateError('Obiettivo non trovato');
     const session = this.sessions.getById(sessionId);
     if (!session || session.objectiveId !== objectiveId) {
       throw new SessionStateError('Sessione non trovata per questo obiettivo');
+    }
+    if (session.status === 'ATTIVA') {
+      return this.transition(objectiveId, sessionId, null);
     }
     if (session.status !== 'IN_AVVIO') {
       throw new SessionStateError('La sessione non è in attesa di avvio');
@@ -104,7 +173,29 @@ export class AgentSessionService {
 
     const project = this.projects.getById(objective.projectId);
     let selection;
-    try { selection = this.catalog?.resolve(session.executionSelection ?? { runtimeId: session.agentType }); }
+    try {
+      if (selectionOverride) {
+        // M19: conferma con modifica — la combinazione scelta dall'utente diventa esplicita.
+        selection = this.catalog?.resolve({
+          runtimeId: selectionOverride.runtimeId,
+          providerId: selectionOverride.providerId,
+          modelId: selectionOverride.modelId ?? null,
+          outputTokenLimit: selectionOverride.outputTokenLimit ?? null,
+          decision: {
+            mode: 'EXPLICIT',
+            reason: `Selezione confermata manualmente: ${selectionOverride.runtimeId}/${selectionOverride.providerId ?? 'provider'}/${selectionOverride.modelId ?? 'modello-runtime'}`,
+            selectedScore: null,
+            requiredCapabilities: [],
+            budget: { policy: { costBudget: null, warningPercent: 80, action: 'WARN' }, spent: 0, remaining: null },
+            candidates: [],
+            decidedAt: new Date().toISOString(),
+          },
+        });
+        if (selection) this.sessions.setExecutionSelection(sessionId, selection);
+      } else {
+        selection = this.catalog?.resolve(session.executionSelection ?? { runtimeId: session.agentType });
+      }
+    }
     catch (error) { throw new SessionStateError(error instanceof Error ? error.message : 'Selezione runtime non utilizzabile'); }
     if (!selection) throw new SessionStateError('Catalogo runtime non disponibile');
     let provider;
@@ -112,17 +203,49 @@ export class AgentSessionService {
       throw new SessionStateError(error instanceof Error ? error.message : 'Runtime non disponibile');
     }
     let executionAttempt: import('../domain/execution-attempt.js').ExecutionAttempt | null = null;
+    const pendingEvents: ExecutionEvent[] = [];
+    // §19: risolve il percorso isolato (worktree + branch dedicato) passato
+    // all'Execution Plane; se l'isolamento non è applicabile degrada al
+    // percorso principale senza cambiare il contratto runtime.
+    let executionPath = project?.repositoryPath ?? null;
+    let workspace: import('../domain/workspace.js').AgentWorkspace | null = null;
+    if (this.worktrees) {
+      try {
+        const resolved = await this.worktrees.resolveExecutionPath(project, objective, session);
+        executionPath = resolved.path ?? executionPath;
+        workspace = resolved.workspace;
+      } catch (error) {
+        if (error instanceof WorktreeError) throw new SessionStateError(error.message);
+        throw error;
+      }
+    }
     const handle = await provider.start({
       objectiveId: objective.id,
-      projectPath: project?.repositoryPath ?? null,
+      projectPath: executionPath,
       objectiveText: objective.objectiveText,
       stopCondition: objective.stopCondition,
+      providerId: selection.providerId,
       model: selection.modelId,
       heartbeatIntervalMs: Math.max(100, Math.floor(session.heartbeatIntervalMs / 2)),
       onEvent: (event) => {
-        if (!executionAttempt) return;
+        // Le approvazioni e gli heartbeat non dipendono dall'ExecutionAttempt:
+        // vanno gestiti anche prima che l'attempt venga creato, altrimenti
+        // vengono persi durante l'avvio del processo reale.
+        if (event.type === 'approval') {
+          this.registerRuntimeApproval(objective.id, session.id, handle.processReference, event);
+          if (executionAttempt) this.supervisor.recordProgress(executionAttempt, 'progress', { message: event.message ?? null, metadata: event.metadata ?? null });
+          return;
+        }
+        if (event.type === 'heartbeat') {
+          this.sessions.touchHeartbeat(sessionId);
+          this.sessions.touchActivity(sessionId);
+          return;
+        }
+        if (!executionAttempt) {
+          pendingEvents.push(event);
+          return;
+        }
         this.supervisor.recordProgress(executionAttempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });
-        if (event.type === 'heartbeat') { this.sessions.touchHeartbeat(sessionId); this.sessions.touchActivity(sessionId); }
       },
     });
 
@@ -130,16 +253,27 @@ export class AgentSessionService {
     this.sessions.setStatus(sessionId, 'ATTIVA');
     this.sessions.touchActivity(sessionId);
     this.sessions.touchHeartbeat(sessionId);
+    if (workspace) {
+      this.sessions.setWorkspaceId(sessionId, workspace.id);
+      this.worktrees?.attachSession(workspace.id, sessionId);
+    }
 
     const attempt = await this.supervisor.startAttempt(session, {
       runtimeType: handle.descriptor.runtimeType,
       runtimeName: handle.descriptor.runtimeName,
-      providerName: handle.descriptor.providerName,
+      providerName: this.catalog?.providerName(selection.runtimeId, selection.providerId) ?? handle.descriptor.providerName,
       modelName: selection.modelId,
       processReference: handle.processReference,
-      metadata: { source: 'agent-session.start', selection, selectionReason: selection.decision?.reason ?? 'Selezione validata dal catalogo M14' },
+      metadata: {
+        source: 'agent-session.start', selection, selectionReason: selection.decision?.reason ?? 'Selezione validata dal catalogo M14',
+        ...(workspace ? { workspaceId: workspace.id, workspacePath: workspace.worktreePath, workspaceBranch: workspace.branch } : {}),
+      },
     });
     executionAttempt = attempt;
+    for (const event of pendingEvents) {
+      if (event.type === 'approval') continue;
+      this.supervisor.recordProgress(executionAttempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });
+    }
 
     this.objectives.markActive(objectiveId, 'IN_LAVORAZIONE', new Date().toISOString());
     this.projects.setStatus(objective.projectId, { status: 'IN_LAVORAZIONE' });
@@ -157,6 +291,39 @@ export class AgentSessionService {
 
     void handle.completion.then((result) => this.applyRuntimeResult(objectiveId, sessionId, result)).catch(() => undefined);
     return this.transition(objectiveId, sessionId, null);
+  }
+
+  /** Avvia automaticamente la sessione IN_AVVIO se esiste almeno un worker
+   *  disponibile (provider configurato non impegnato da una sessione ATTIVA).
+   *  Altrimenti l'obiettivo resta in coda. failed=true se start() ha lanciato
+   *  (es. governance): la coda applica un cooldown per non ripetere il
+   *  preflight (log/notifiche) a ogni tick. */
+  async tryAutoStart(objectiveId: string, sessionId: string): Promise<AutoStartResult> {
+    const session = this.sessions.getById(sessionId);
+    if (!session || session.status !== 'IN_AVVIO') return { started: false, transition: null };
+    const objective = this.objectives.getById(objectiveId);
+    if (!objective || objective.status !== 'IN_AVVIO') return { started: false, transition: null };
+    // Approvazione governance già pendente: non rieseguire il preflight a ogni
+    // tick. Dopo la decisione dell'operatore il preflight riesce e la coda
+    // avvia l'obiettivo al tick successivo.
+    if (this.governance && this.governance.listApprovals(objectiveId).some((approval) => approval.status === 'PENDING')) {
+      return { started: false, transition: null };
+    }
+    if (!this.hasAvailableWorker()) return { started: false, transition: null };
+    try {
+      const transition = await this.start(objectiveId, sessionId);
+      return { started: true, transition };
+    } catch {
+      return { started: false, transition: null, failed: true };
+    }
+  }
+
+  /** Esiste almeno un worker libero: provider configurati meno sessioni ATTIVE. */
+  private hasAvailableWorker(): boolean {
+    const configured = this.providers.list().filter((provider) => provider.configured).length;
+    if (configured <= 0) return false;
+    const active = this.sessions.listAll().filter((session) => session.status === 'ATTIVA').length;
+    return active < configured;
   }
 
   /** Heartbeat authenticated from the agent bridge; it also records normal activity. */
@@ -239,10 +406,10 @@ export class AgentSessionService {
   }
 
   /**
-   * Conclusione del lavoro (§5 e §12-M4): la sessione termina COMPLETATA e
-   * l'obiettivo passa RICHIEDE_ATTENZIONE. L'approvazione (COMPLETATO) è
-   * una decisione umana che arriverà con M5; intanto il checkpoint di
-   * conclusione resta PENDING_DECISION con le evidenze §6 (SYSTEM+AGENT).
+   * Conclusione riuscita del lavoro (§4.1 V2): la sessione termina COMPLETATA
+   * e l'obiettivo passa automaticamente a COMPLETATO, con report finale
+   * persistito. Un completamento riuscito NON genera un checkpoint pendente né
+   * una voce in «Richiede te»: l'approvazione umana ordinaria è superata.
    */
   async complete(objectiveId: string, input: unknown = {}, runtimeResult?: ExecutionResult): Promise<SessionTransition> {
     const parsed = completeSessionSchema.parse(input);
@@ -251,45 +418,50 @@ export class AgentSessionService {
     const session = this.currentSession(objectiveId);
     if (!session) throw new SessionStateError('Nessuna sessione attiva da completare');
     this.retryWorker?.cancelSession(session.id, 'Sessione completata');
+    await this.stopProcess(session);
 
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
     const report = parsed.report ?? 'Obiettivo completato';
 
-    const terminated = this.sessions.terminate(session.id, 'COMPLETATA', null);
+    this.sessions.terminate(session.id, 'COMPLETATA', null);
     await this.supervisor.finalizeLatestAttempt(session.id, {
       endedAt: new Date().toISOString(),
       status: 'COMPLETED',
       exitCode: runtimeResult?.exitCode ?? 0,
       reason: runtimeResult?.reason ?? 'Sessione completata con successo',
-      inputTokens: runtimeResult?.usage?.inputTokens ?? null, outputTokens: runtimeResult?.usage?.outputTokens ?? null, totalTokens: runtimeResult?.usage?.totalTokens ?? null, costEstimate: runtimeResult?.usage?.costEstimate ?? null, costActual: runtimeResult?.usage?.costActual ?? null,
+      inputTokens: runtimeResult?.usage?.inputTokens ?? null, outputTokens: runtimeResult?.usage?.outputTokens ?? null, totalTokens: runtimeResult?.usage?.totalTokens ?? null, cachedInputTokens: runtimeResult?.usage?.cachedInputTokens ?? null, cachedOutputTokens: runtimeResult?.usage?.cachedOutputTokens ?? null, costEstimate: runtimeResult?.usage?.costEstimate ?? null, costActual: this.effectiveCost(session, runtimeResult?.usage),
       metadata: { finalEvent: 'session.complete', runtime: runtimeResult?.metadata ?? null },
     });
-    this.objectives.conclude(objectiveId, report, gitEnd);
-    this.projects.setStatus(objective.projectId, { status: 'RICHIEDE_ATTENZIONE' });
 
-    const checkpoint = this.checkpoints.create({
-      outcome: 'COMPLETED',
-      projectId: objective.projectId,
-      objective: this.objectives.getById(objectiveId)!,
-      session: terminated ?? session,
-      gitEnd,
-      agent: parsed,
-      defaults: {
-        summary: `La sessione agente si è conclusa: lavoro dichiarato completo per «${objective.title}».`,
-        recommendedAction: 'Valuta i criteri di accettazione e decidi come procedere.',
-      },
+    // Completamento riuscito: stato terminale automatico, senza approvazione
+    // umana ordinaria (§ prodotto). Il report finale è mostrato sull'obiettivo.
+    this.objectives.completeWithReport(objectiveId, report, gitEnd);
+    // Deriva lo stato progetto dagli obiettivi reali: il progetto torna FERMO
+    // quando l'obiettivo si chiude senza altri obiettivi ancora aperti (non
+    // terminali) — è un contenitore permanente pronto per il prossimo ciclo.
+    const siblings = this.objectives.listByProject(objective.projectId);
+    const openSibling = siblings.find((o) => o.id !== objectiveId && o.status !== 'COMPLETATO' && o.status !== 'ANNULLATO');
+    this.projects.setStatus(objective.projectId, {
+      status: openSibling ? objectiveStatusToProjectStatus(openSibling.status) : 'FERMO',
     });
 
     this.events.log(EVENT_SESSION_COMPLETED, {
       projectId: objective.projectId,
       objectiveId,
       sessionId: session.id,
-      payload: { hasGitEnd: gitEnd !== null, checkpointId: checkpoint.id },
+      payload: { hasGitEnd: gitEnd !== null, finalReport: report },
     });
-    this.notifications?.notifyCheckpointCreated({ ...checkpoint, summary: checkpoint.summary });
-    this.notifications?.notifyCheckpointDecisionRequired({ ...checkpoint, summary: checkpoint.summary });
+    this.notifications?.notifyObjectiveCompleted({ id: objective.id, projectId: objective.projectId, title: objective.title });
 
-    return this.transition(objectiveId, session.id, checkpoint);
+    // §19.4: integrazione controllata della workspace nel repository di
+    // destinazione. Non altera l'esito del completamento: se l'integrazione
+    // non è sicura/deterministica il lavoro resta preservato sul branch e
+    // viene creata una richiesta umana (§19.4/§19.5).
+    if (this.worktrees) {
+      await this.worktrees.integrateOnComplete(objective).catch(() => undefined);
+    }
+
+    return this.transition(objectiveId, session.id, null);
   }
 
   /**
@@ -304,6 +476,7 @@ export class AgentSessionService {
     const session = this.currentSession(objectiveId);
     if (!session) throw new SessionStateError('Nessuna sessione attiva da bloccare');
     this.retryWorker?.cancelSession(session.id, 'Sessione bloccata');
+    await this.stopProcess(session);
 
     const reason = parsed.reason ?? "Bloccato dall'operatore";
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
@@ -353,8 +526,11 @@ export class AgentSessionService {
     const session = this.currentSession(objectiveId);
     if (!session) throw new SessionStateError('Nessuna sessione attiva da segnalare in errore');
     this.retryWorker?.cancelSession(session.id, 'Sessione terminata in errore');
+    await this.stopProcess(session);
 
     const detail = parsed.error ?? "Errore segnalato dall'operatore";
+    const errorClass = classifyError(detail);
+    const translation = translateTechnicalError(detail, errorClass, session.agentType);
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
 
     const terminated = this.sessions.terminate(session.id, 'ERRORE', detail);
@@ -364,7 +540,7 @@ export class AgentSessionService {
       exitCode: runtimeResult?.exitCode ?? null,
       reason: detail,
       errorClass: runtimeResult?.errorClass ?? 'USER_REPORTED',
-      inputTokens: runtimeResult?.usage?.inputTokens ?? null, outputTokens: runtimeResult?.usage?.outputTokens ?? null, totalTokens: runtimeResult?.usage?.totalTokens ?? null, costEstimate: runtimeResult?.usage?.costEstimate ?? null, costActual: runtimeResult?.usage?.costActual ?? null,
+      inputTokens: runtimeResult?.usage?.inputTokens ?? null, outputTokens: runtimeResult?.usage?.outputTokens ?? null, totalTokens: runtimeResult?.usage?.totalTokens ?? null, cachedInputTokens: runtimeResult?.usage?.cachedInputTokens ?? null, cachedOutputTokens: runtimeResult?.usage?.cachedOutputTokens ?? null, costEstimate: runtimeResult?.usage?.costEstimate ?? null, costActual: this.effectiveCost(session, runtimeResult?.usage),
       metadata: { finalEvent: 'session.fail', runtime: runtimeResult?.metadata ?? null },
     });
     this.objectives.setStatus(objectiveId, 'ERRORE');
@@ -379,9 +555,10 @@ export class AgentSessionService {
       session: terminated ?? session,
       gitEnd,
       agent: parsed,
+      technicalDetails: detail,
       defaults: {
-        summary: detail,
-        recommendedAction: 'Verifica il problema tecnico e decidi come procedere.',
+        summary: `${translation.summary} ${translation.consequences}`,
+        recommendedAction: translation.recommendedAction,
       },
     });
 
@@ -391,12 +568,23 @@ export class AgentSessionService {
       sessionId: session.id,
       payload: { error: detail, checkpointId: checkpoint.id },
     });
-    const errorClass = classifyError(detail);
     this.notifications?.notifySessionError({ ...session, projectId: objective.projectId, exitReason: detail, errorClass });
     this.notifications?.notifyObjectiveFailed({ id: objective.id, projectId: objective.projectId, title: objective.title, errorClass });
     this.notifications?.notifyCheckpointDecisionRequired({ ...checkpoint, summary: checkpoint.summary });
 
     return this.transition(objectiveId, session.id, checkpoint);
+  }
+
+  /** Ferma il processo reale della sessione (best-effort): collega la
+   *  terminazione della sessione alla reale interruzione dell'esecuzione. */
+  private async stopProcess(session: AgentSession): Promise<void> {
+    const provider = this.providers.get(session.agentType);
+    if (!provider) return;
+    try {
+      await provider.stop(session.processReference ?? session.id);
+    } catch {
+      // Processo gia' terminato o runtime non raggiungibile: nessuna azione.
+    }
   }
 
   /** La sessione ancora aperta più recente dell'obiettivo, se esiste. */
@@ -411,26 +599,54 @@ export class AgentSessionService {
     return null;
   }
 
+  /**
+   * Costo effettivo di un attempt: se il runtime restituisce un costo monetario
+   * lo usa; altrimenti lo calcola dai token reali × prezzo per token risolto
+   * dall'archivio G-Rex Pricing (consuntivo).
+   */
+  private effectiveCost(session: AgentSession, usage?: ExecutionResult['usage']): number | null {
+    const monetary = usage?.costActual ?? usage?.costEstimate ?? null;
+    if (monetary != null) return monetary;
+    const selection = session.executionSelection;
+    if (!selection || !this.catalog) return null;
+    const tp = this.catalog.tokenPricing(selection.runtimeId, selection.providerId, selection.modelId);
+    if (!tp) return null;
+    const inputTokens = usage?.inputTokens ?? 0;
+    const outputTokens = usage?.outputTokens ?? 0;
+    const cachedInputTokens = usage?.cachedInputTokens ?? 0;
+    const cachedOutputTokens = usage?.cachedOutputTokens ?? 0;
+    if (inputTokens === 0 && outputTokens === 0 && cachedInputTokens === 0) return null;
+    // Scaglioni cache-miss/cache-hit: `input_tokens` include i token serviti
+    // dalla cache, quindi la quota cache-miss è la differenza.
+    const cacheMissInput = Math.max(0, inputTokens - cachedInputTokens);
+    const cost =
+      cacheMissInput * (tp.inputPerToken ?? 0)
+      + cachedInputTokens * (tp.cachedInputPerToken ?? tp.inputPerToken ?? 0)
+      + outputTokens * (tp.outputPerToken ?? 0)
+      + cachedOutputTokens * (tp.cachedOutputPerToken ?? tp.outputPerToken ?? 0);
+    return Number(cost.toFixed(8));
+  }
+
   /** Bridges a provider result back into the existing Control Plane lifecycle. */
   private async applyRuntimeResult(objectiveId: string, sessionId: string, result: ExecutionResult): Promise<void> {
     const session = this.sessions.getById(sessionId);
     if (!session || session.status !== 'ATTIVA') return; // a human transition already won the race
     if (result.outcome === 'COMPLETED') {
-      const pending = result.usage?.costActual ?? result.usage?.costEstimate ?? 0;
+      const pending = this.effectiveCost(session, result.usage) ?? 0;
       const governance = this.governance?.evaluateAdditionalCost(objectiveId, pending);
       if (governance) this.governance?.recordDecision(objectiveId, governance.decision, pending);
       if (governance?.decision === 'HARD_STOP' || (!governance && this.supervisor.exceedsBudget(sessionId, pending))) {
         await this.fail(objectiveId, { error: 'Budget di esecuzione superato' }, { ...result, outcome: 'FAILED', errorClass: 'AGENT_CONTROL_ERROR' });
         return;
       }
-      await this.complete(objectiveId, { report: result.reason ?? `Completato da ${session.agentType}` }, result);
+      await this.complete(objectiveId, { report: result.report ?? result.reason ?? `Completato da ${session.agentType}` }, result);
       return;
     }
     if (result.outcome === 'FAILED') {
       const failed = await this.supervisor.finalizeLatestAttempt(sessionId, {
         endedAt: new Date().toISOString(), status: 'FAILED', exitCode: result.exitCode,
         reason: result.reason, errorClass: result.errorClass ?? 'AGENT_ERROR', metadata: result.metadata ?? null,
-        inputTokens: result.usage?.inputTokens ?? null, outputTokens: result.usage?.outputTokens ?? null, totalTokens: result.usage?.totalTokens ?? null, costEstimate: result.usage?.costEstimate ?? null, costActual: result.usage?.costActual ?? null,
+        inputTokens: result.usage?.inputTokens ?? null, outputTokens: result.usage?.outputTokens ?? null, totalTokens: result.usage?.totalTokens ?? null, cachedInputTokens: result.usage?.cachedInputTokens ?? null, cachedOutputTokens: result.usage?.cachedOutputTokens ?? null, costEstimate: result.usage?.costEstimate ?? null, costActual: this.effectiveCost(session, result.usage),
       });
       const plan = this.supervisor.retryPlan(sessionId, session.agentType, failed);
       if (plan) {
@@ -438,7 +654,7 @@ export class AgentSessionService {
         if (!this.retryWorker) await this.startRetryAttempt(objectiveId, sessionId, plan.runtime, plan.fallbackOfAttemptId);
         return;
       }
-      await this.fail(objectiveId, { error: result.reason ?? `Errore del runtime ${session.agentType}` }, result);
+      await this.fail(objectiveId, { error: (result.reason ?? `Errore del runtime ${session.agentType}`).slice(0, 1000) }, result);
       return;
     }
     await this.stop(objectiveId, sessionId, { reason: result.reason ?? `Runtime ${session.agentType} interrotto` });
@@ -456,27 +672,114 @@ export class AgentSessionService {
     const session = this.sessions.getById(sessionId)!;
     const original = session.executionSelection;
     let selection;
-    try { selection = this.catalog?.resolve(runtime === original?.runtimeId ? original : { runtimeId: runtime }); }
+    try {
+      if (original?.decision?.mode === 'EXPLICIT' && runtime === original.runtimeId) {
+        selection = this.catalog?.resolve(original);
+      } else {
+        selection = this.runtimeSelector?.selectForRuntime(runtime, { projectId: objective.projectId, objectiveText: objective.objectiveText, stopCondition: objective.stopCondition, defaultRuntime: runtime });
+      }
+    }
     catch (error) { throw new SessionStateError(error instanceof Error ? error.message : 'Fallback non utilizzabile'); }
     if (!selection) throw new SessionStateError('Catalogo runtime non disponibile');
     const provider = this.providers.require(selection.runtimeId);
     let attempt: import('../domain/execution-attempt.js').ExecutionAttempt | null = null;
-    const handle = await provider.start({ objectiveId, projectPath: project?.repositoryPath ?? null, objectiveText: objective.objectiveText, stopCondition: objective.stopCondition, model: selection.modelId,
+    const pendingEvents: ExecutionEvent[] = [];
+    // §19: retry/fallback riusano la stessa workspace dell'Objective (§19.2):
+    // il lavoro già prodotto non viene perso né ricreato.
+    let executionPath = project?.repositoryPath ?? null;
+    let workspace: import('../domain/workspace.js').AgentWorkspace | null = null;
+    if (this.worktrees) {
+      try {
+        const resolved = await this.worktrees.resolveExecutionPath(project, objective, session);
+        executionPath = resolved.path ?? executionPath;
+        workspace = resolved.workspace;
+      } catch (error) {
+        if (error instanceof WorktreeError) throw new SessionStateError(error.message);
+        throw error;
+      }
+    }
+    const handle = await provider.start({ objectiveId, projectPath: executionPath, objectiveText: objective.objectiveText, stopCondition: objective.stopCondition, providerId: selection.providerId, model: selection.modelId,
       heartbeatIntervalMs: Math.max(100, Math.floor(session.heartbeatIntervalMs / 2)),
       onEvent: (event) => {
-        if (!attempt) return;
+        if (event.type === 'approval') {
+          this.registerRuntimeApproval(objectiveId, sessionId, handle.processReference, event);
+          if (attempt) this.supervisor.recordProgress(attempt, 'progress', { message: event.message ?? null, metadata: event.metadata ?? null });
+          return;
+        }
+        if (event.type === 'heartbeat') {
+          this.sessions.touchHeartbeat(sessionId);
+          this.sessions.touchActivity(sessionId);
+          return;
+        }
+        if (!attempt) {
+          pendingEvents.push(event);
+          return;
+        }
         this.supervisor.recordProgress(attempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });
-        if (event.type === 'heartbeat') { this.sessions.touchHeartbeat(sessionId); this.sessions.touchActivity(sessionId); }
       },
     });
     this.sessions.setExecutionSelection(sessionId, selection);
     this.sessions.setProcessReference(sessionId, handle.processReference, selection.runtimeId);
+    if (workspace) {
+      this.sessions.setWorkspaceId(sessionId, workspace.id);
+      this.worktrees?.attachSession(workspace.id, sessionId);
+    }
     attempt = await this.supervisor.startAttempt(this.sessions.getById(sessionId)!, {
-      runtimeType: handle.descriptor.runtimeType, runtimeName: handle.descriptor.runtimeName, providerName: handle.descriptor.providerName,
+      runtimeType: handle.descriptor.runtimeType, runtimeName: handle.descriptor.runtimeName, providerName: this.catalog?.providerName(selection.runtimeId, selection.providerId) ?? handle.descriptor.providerName,
       modelName: selection.modelId, processReference: handle.processReference, fallbackOfAttemptId,
-      metadata: { source: 'process-supervisor.retry', selection, selectionReason: fallbackOfAttemptId ? 'Fallback validato dal catalogo M14' : 'Retry della selezione validata', backoffApplied: true },
+      metadata: { source: 'process-supervisor.retry', selection, selectionReason: fallbackOfAttemptId ? 'Ri-selezione automatica per fallback (M18)' : (selection.decision?.mode === 'AUTOMATIC' ? 'Ri-selezione automatica per retry (M18)' : 'Retry della selezione validata'), backoffApplied: true, ...(workspace ? { workspaceId: workspace.id, workspacePath: workspace.worktreePath, workspaceBranch: workspace.branch } : {}) },
     });
+    for (const event of pendingEvents) {
+      if (event.type === 'approval') continue;
+      this.supervisor.recordProgress(attempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });
+    }
+    this.sessions.touchHeartbeat(sessionId);
+    this.sessions.touchActivity(sessionId);
     void handle.completion.then((result) => this.applyRuntimeResult(objectiveId, sessionId, result)).catch(() => undefined);
+  }
+
+  /** M19: riprova un obiettivo in errore, ri-selezionando (o usando l'override) e riavviando. */
+  async retry(objectiveId: string, selectionOverride?: Partial<ExecutionSelection> & { runtimeId: string }): Promise<SessionTransition> {
+    const objective = this.objectives.getById(objectiveId);
+    if (!objective) throw new SessionStateError('Obiettivo non trovato');
+    if (objective.status !== 'ERRORE' && objective.status !== 'IN_AVVIO') {
+      throw new SessionStateError('Obiettivo non riprovabile nello stato corrente');
+    }
+
+    const failedSession = this.sessions.listByObjective(objectiveId).slice(-1)[0] ?? null;
+    const heartbeatIntervalMs = failedSession?.heartbeatIntervalMs ?? 30000;
+
+    let selection: ExecutionSelection | undefined;
+    try {
+      if (selectionOverride) {
+        selection = this.catalog?.resolve({
+          runtimeId: selectionOverride.runtimeId,
+          providerId: selectionOverride.providerId,
+          modelId: selectionOverride.modelId ?? null,
+          outputTokenLimit: selectionOverride.outputTokenLimit ?? null,
+          decision: {
+            mode: 'EXPLICIT',
+            reason: `Riprova con selezione modificata: ${selectionOverride.runtimeId}/${selectionOverride.providerId ?? 'provider'}/${selectionOverride.modelId ?? 'modello-runtime'}`,
+            selectedScore: null,
+            requiredCapabilities: [],
+            budget: { policy: { costBudget: null, warningPercent: 80, action: 'WARN' }, spent: 0, remaining: null },
+            candidates: [],
+            decidedAt: new Date().toISOString(),
+          },
+        });
+      } else if (this.runtimeSelector) {
+        selection = this.runtimeSelector.select({ projectId: objective.projectId, objectiveText: objective.objectiveText, stopCondition: objective.stopCondition, defaultRuntime: failedSession?.agentType ?? 'cline' });
+      } else {
+        selection = this.catalog?.resolve({ runtimeId: failedSession?.agentType ?? 'cline' });
+      }
+    }
+    catch (error) { throw new SessionStateError(error instanceof Error ? error.message : 'Selezione runtime non utilizzabile'); }
+    if (!selection) throw new SessionStateError('Catalogo runtime non disponibile');
+
+    this.objectives.setStatus(objectiveId, 'IN_AVVIO');
+    this.projects.setStatus(objective.projectId, { status: 'IN_AVVIO' });
+    const session = this.sessions.createWithHeartbeat(objectiveId, selection.runtimeId, heartbeatIntervalMs, selection);
+    return this.start(objectiveId, session.id);
   }
 
   private transition(

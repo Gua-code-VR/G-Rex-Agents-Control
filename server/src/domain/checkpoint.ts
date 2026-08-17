@@ -3,9 +3,11 @@ import type { GitStatus } from './project.js';
 import type { DecisionType } from './decision.js';
 
 /**
- * Checkpoint (§5 e §12-M4): la conclusione, la richiesta di intervento,
- * il blocco o l'errore di una sessione agente diventano un checkpoint
- * persistente e comprensibile che richiede una decisione umana.
+ * Checkpoint (§5 e §12-M4): la richiesta di intervento, il blocco o
+ * l'errore terminale di una sessione agente diventano un checkpoint
+ * persistente e comprensibile che richiede una decisione umana. Un
+ * completamento riuscito NON genera checkpoint (§4.1 V2): conclude
+ * automaticamente l'obiettivo senza approvazione ordinaria.
  *
  * Classificazione delle evidenze (§6):
  * - SYSTEM --- ciò che Agent Control ha verificato (stato sessione,
@@ -105,6 +107,8 @@ export interface Checkpoint {
   warnings: string[];
   /** Azione raccomandata (§5/§6). */
   recommendedAction: string;
+  /** Dettagli tecnici grezzi (log/errore CLI) mostrati solo dietro «Dettagli tecnici». */
+  technicalDetails: string | null;
   /** Riferimento al rapporto completo (§5/§6), es. objective:<id>:final_report. */
   fullReportReference: string | null;
   /** Sorgenti che hanno contribuito alle evidenze (§6). */

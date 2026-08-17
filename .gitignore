@@ -23,3 +23,13 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Tooling locale / output di analisi
+.codex/
+graphify-out/
+
+# File temporanei locali
+code_help.txt
+installed_extensions.txt
+user_exts.txt
+*.bak

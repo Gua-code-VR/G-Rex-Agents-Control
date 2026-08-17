@@ -19,7 +19,7 @@ function provider(id: string, options: { available?: boolean; capabilities?: str
   return {
     descriptor: { id, runtimeType: 'cli', runtimeName: id, providerName: `${id}-provider`, defaultModel: `${id}-model` },
     isConfigured: () => entry.runtime.available,
-    catalog: () => entry,
+    catalog: () => [entry],
     start: async () => { throw new Error('not used'); }, stop: async () => undefined, touchHeartbeat: async () => undefined,
   };
 }

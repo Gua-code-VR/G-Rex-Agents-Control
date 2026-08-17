@@ -4,8 +4,8 @@ import { z } from 'zod';
 // §5 + M5: HumanDecision — record della decisione umana su un checkpoint.
 // ---------------------------------------------------------------------------
 
-/** Le quattro decisioni umane possibili (§12-M5). */
-export const DECISION_TYPES = ['APPROVE', 'REQUEST_CHANGES', 'STOP', 'CANCEL'] as const;
+/** Le decisioni umane possibili (§12-M5 + M19 RETRY per gli errori tecnici). */
+export const DECISION_TYPES = ['APPROVE', 'REQUEST_CHANGES', 'STOP', 'CANCEL', 'RETRY'] as const;
 export type DecisionType = (typeof DECISION_TYPES)[number];
 
 /** Schema di input per POST /api/checkpoints/:id/decide. */
@@ -46,14 +46,16 @@ export const OBJECTIVE_EFFECTS: Record<DecisionType, ObjectiveStatus> = {
   REQUEST_CHANGES: 'RICHIEDE_ATTENZIONE',
   STOP: 'RICHIEDE_ATTENZIONE',
   CANCEL: 'ANNULLATO',
+  RETRY: 'IN_AVVIO',
 };
 
 /**
  * Effetto di una decisione sullo stato del progetto.
  */
 export const PROJECT_EFFECTS: Record<DecisionType, ProjectStatus> = {
-  APPROVE: 'COMPLETATO',
+  APPROVE: 'FERMO',
   REQUEST_CHANGES: 'RICHIEDE_ATTENZIONE',
   STOP: 'RICHIEDE_ATTENZIONE',
   CANCEL: 'FERMO',
+  RETRY: 'IN_AVVIO',
 };

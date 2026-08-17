@@ -38,6 +38,7 @@ const DECISION_TYPE_LABEL: Record<DecisionType, string> = {
   REQUEST_CHANGES: 'Richieste modifiche',
   STOP: 'Fermato',
   CANCEL: 'Annullato',
+  RETRY: 'Riprovato',
 };
 
 function formatDate(value: string): string {
@@ -187,6 +188,13 @@ export function CheckpointList({
             <p className="muted small checkpoint-recommended">
               Azione raccomandata: {checkpoint.recommendedAction}
             </p>
+          )}
+
+          {checkpoint.technicalDetails && (
+            <details className="checkpoint-technical">
+              <summary>Dettagli tecnici</summary>
+              <pre className="mono checkpoint-technical-body">{checkpoint.technicalDetails}</pre>
+            </details>
           )}
 
           {checkpoint.fullReportReference && (

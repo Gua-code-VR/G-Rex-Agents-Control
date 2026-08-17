@@ -10,6 +10,7 @@ import type {
   ObjectiveRepository,
   SessionRepository,
 } from '../infrastructure/db/objective-repo.js';
+import type { ExecutionProviderRegistry } from '../integrations/execution-provider.js';
 
 export const EVENT_OBJECTIVE_CREATED = 'objective.created';
 export const EVENT_OBJECTIVE_CANCELLED = 'objective.cancelled';
@@ -39,6 +40,7 @@ export class ObjectiveService {
     private readonly projects: ProjectService,
     private readonly gitStatus: GitStatusService,
     private readonly events: EventService,
+    private readonly providers: ExecutionProviderRegistry,
     private readonly catalog: ProviderCatalogService,
     private readonly runtimeSelector: RuntimeSelectionService,
     private readonly defaultRuntime: string,
@@ -143,6 +145,10 @@ export class ObjectiveService {
 
     for (const session of this.sessions.listByObjective(id)) {
       if (session.status === 'IN_AVVIO' || session.status === 'ATTIVA') {
+        if (session.status === 'ATTIVA') {
+          const provider = this.providers.get(session.agentType);
+          if (provider) void provider.stop(session.processReference ?? session.id).catch(() => undefined);
+        }
         this.sessions.terminate(session.id, 'INTERROTTA', 'Obiettivo annullato');
       }
     }

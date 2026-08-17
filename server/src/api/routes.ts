@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import {
   ObjectiveConflictError,
   ObjectiveStateError,
+  type CreatedObjective,
   type ObjectiveService,
 } from '../application/objective-service.js';
 import {
@@ -29,7 +30,9 @@ import type { ExecutionProviderRegistry } from '../integrations/execution-provid
 import type { ExecutionAttemptRepository } from '../infrastructure/db/execution-attempt-repo.js';
 import type { ProcessSupervisor } from '../application/process-supervisor.js';
 import type { GovernanceService } from '../application/governance-service.js';
-import type { ProviderCatalogService } from '../application/provider-catalog-service.js';
+import type { ExecutionQueueWorker } from '../application/execution-queue-worker.js';
+import { WorktreeError, type WorktreeService } from '../application/worktree-service.js';
+import { normalizeModelId, type ProviderCatalogService } from '../application/provider-catalog-service.js';
 
 export interface ApiDeps {
   projects: ProjectService;
@@ -47,6 +50,8 @@ export interface ApiDeps {
   supervisor: ProcessSupervisor;
   governance: GovernanceService;
   catalog: ProviderCatalogService;
+  queueWorker: ExecutionQueueWorker;
+  workspaces: WorktreeService;
 }
 
 /** API REST di M4 (Web App/API, §7): registro progetti, obiettivi, sessioni
@@ -62,6 +67,19 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   });
   app.get('/api/sessions/:id/execution-attempts', async (req) => ({ attempts: deps.attempts.listBySession((req.params as { id: string }).id) }));
   app.get('/api/sessions/:id/execution-metrics', async (req) => ({ metrics: deps.supervisor.totals((req.params as { id: string }).id) }));
+
+  // Approvazioni runtime pendenti (§19 spec): richieste inoltrate dal runtime
+  // in attesa di decisione umana, con azione Approva/Rifiuta.
+  app.get('/api/runtime-approvals', async () => ({ approvals: deps.agentSessions.listRuntimeApprovals() }));
+  app.post('/api/runtime-approvals/:id/decide', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { approved?: boolean } | undefined;
+    if (typeof body?.approved !== 'boolean') return reply.code(400).send({ message: 'Campo `approved` booleano obbligatorio' });
+    const result = await deps.agentSessions.decideRuntimeApproval(id, body.approved);
+    if (!result) return reply.code(404).send({ message: 'Approvazione runtime non trovata' });
+    return result;
+  });
+
   app.get('/api/health', async () => ({
     status: 'ok',
     service: 'g-rex-agent-control',
@@ -95,6 +113,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       eventsCount: deps.events.count(),
       // M4: decisioni umane ancora da prendere (checkpoint PENDING_DECISION).
       pendingDecisions: deps.checkpoints.countPending(),
+      // Costo live rilevato oggi (fonte unica per l'header).
+      costToday: deps.attempts.sumCostToday(),
       storage: {
         dbPath: deps.config.dbPath,
         exists: dbExists,
@@ -136,7 +156,66 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.post('/api/projects', async (req, reply) => {
     try {
       const project = deps.projects.register(req.body);
-      return reply.code(201).send({ project });
+
+      // Associa il repository (stato Git essenziale) quando è indicato un percorso.
+      // Best-effort: un percorso non valido registra l'errore nello snapshot senza
+      // impedire la creazione del progetto.
+      let repositoryAssociated = false;
+      if (project.repositoryPath) {
+        try {
+          await deps.gitStatus.refresh(project.id);
+          repositoryAssociated = true;
+        } catch {
+          repositoryAssociated = false;
+        }
+      }
+
+      // Crea l'obiettivo iniziale quando fornito («Obiettivo iniziale») e lo
+      // avvia automaticamente senza richiedere la conferma ordinaria della
+      // selezione (§11.2): parte subito se esiste almeno un worker disponibile,
+      // altrimenti resta IN_AVVIO in coda e la coda di esecuzione lo avvia
+      // appena un worker si libera.
+      let initialObjective: (CreatedObjective & { autoStart: { started: boolean } }) | null = null;
+      if (project.currentObjective) {
+        try {
+          const created = await deps.objectives.create(project.id, {
+            // Il testo completo diventa l'objectiveText (limite 50.000, §2.2);
+            // il titolo è una semplice etichetta breve, quindi ne deriviamo
+            // un prefisso senza troncare mai l'objectiveText.
+            title: project.currentObjective.slice(0, 200),
+            objectiveText: project.currentObjective,
+          });
+          let state: CreatedObjective = created;
+          let started = false;
+          try {
+            const result = await deps.agentSessions.tryAutoStart(created.objective.id, created.session.id);
+            if (result.started && result.transition) {
+              state = {
+                objective: result.transition.objective,
+                session: result.transition.session,
+                project: result.transition.project,
+              };
+              started = true;
+            }
+          } catch {
+            // Best-effort: se l'avvio automatico fallisce (es. governance)
+            // l'obiettivo resta IN_AVVIO in coda.
+            started = false;
+          }
+          initialObjective = { ...state, autoStart: { started } };
+        } catch {
+          // Best-effort: se la creazione dell'obiettivo fallisce, il progetto
+          // resta valido e l'operatore può crearne uno in seguito.
+          initialObjective = null;
+        }
+      }
+
+      const persisted = deps.projects.getById(project.id) ?? project;
+      return reply.code(201).send({
+        project: persisted,
+        repositoryAssociated,
+        initialObjective,
+      });
     } catch (err) {
       if (err instanceof ZodError) {
         return reply.code(400).send({ message: 'Dati non validi', issues: err.issues });
@@ -163,24 +242,6 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     } catch (err) {
       if (err instanceof ZodError) {
         return reply.code(400).send({ message: 'Dati non validi', issues: err.issues });
-      }
-      throw err;
-    }
-  });
-
-  app.patch('/api/projects/:id/status', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    try {
-      const project = deps.projects.setStatus(id, req.body);
-      if (!project) {
-        return reply.code(404).send({ message: 'Progetto non trovato' });
-      }
-      return { project };
-    } catch (err) {
-      if (err instanceof ZodError) {
-        return reply
-          .code(400)
-          .send({ message: 'Stato non valido: usa uno degli stati ufficiali' });
       }
       throw err;
     }
@@ -214,8 +275,29 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.post('/api/projects/:id/objectives', async (req, reply) => {
     const { id } = req.params as { id: string };
     try {
+      // Coda di esecuzione (§11.2): la selezione viene proposta in automatico
+      // e l'obiettivo parte subito se esiste almeno un worker disponibile.
+      // Altrimenti resta IN_AVVIO («In attesa di avvio») e la coda di
+      // esecuzione lo avvia appena un worker si libera.
       const created = await deps.objectives.create(id, req.body);
-      return reply.code(201).send(created);
+      try {
+        const result = await deps.agentSessions.tryAutoStart(created.objective.id, created.session.id);
+        if (result.started && result.transition) {
+          return reply.code(201).send({
+            objective: result.transition.objective,
+            session: result.transition.session,
+            project: result.transition.project,
+            autoStart: { started: true },
+          });
+        }
+      } catch {
+        // Best-effort: se l'avvio automatico fallisce l'obiettivo resta
+        // IN_AVVIO in coda (l'operatore può ancora avviarlo manualmente).
+      }
+      return reply.code(201).send({
+        ...created,
+        autoStart: { started: false },
+      });
     } catch (err) {
       if (err instanceof ObjectiveConflictError) {
         return reply.code(409).send({ message: err.message });
@@ -267,8 +349,15 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
 
   app.post('/api/objectives/:id/sessions/:sessionId/start', async (req, reply) => {
     const { id, sessionId } = req.params as { id: string; sessionId: string };
+    // M19: conferma della selezione. Il body può contenere un override
+    // { runtimeId, providerId, modelId, outputTokenLimit? } quando l'utente
+    // modifica la combinazione proposta prima di avviare.
+    const body = (req.body ?? {}) as { runtimeId?: string; providerId?: string; modelId?: string | null; outputTokenLimit?: number | null };
+    const override = body.runtimeId
+      ? { runtimeId: body.runtimeId, providerId: body.providerId, modelId: normalizeModelId(body.modelId), outputTokenLimit: body.outputTokenLimit ?? null }
+      : undefined;
     try {
-      const transition = await deps.agentSessions.start(id, sessionId);
+      const transition = await deps.agentSessions.start(id, sessionId, override);
       return {
         objective: transition.objective,
         session: transition.session,
@@ -278,6 +367,39 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     } catch (err) {
       if (err instanceof SessionStateError) {
         return reply.code(400).send({ message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/api/objectives/:id/retry', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    // M19: «Riprova»/«Cambia agente» su un errore tecnico. Il body può
+    // contenere un override { runtimeId, providerId, modelId } quando l'utente
+    // cambia agente; senza override viene ri-selezionato automaticamente.
+    const body = (req.body ?? {}) as { runtimeId?: string; providerId?: string; modelId?: string | null; outputTokenLimit?: number | null };
+    const override = body.runtimeId
+      ? { runtimeId: body.runtimeId, providerId: body.providerId, modelId: normalizeModelId(body.modelId), outputTokenLimit: body.outputTokenLimit ?? null }
+      : undefined;
+    try {
+      // Risolve i checkpoint pendenti (decisione RETRY) prima di riprovare.
+      const pending = deps.checkpoints.listByObjective(id).filter((c) => c.status === 'PENDING_DECISION');
+      for (const checkpoint of pending) {
+        deps.decisions.decide(checkpoint.id, { decisionType: 'RETRY', note: 'Riprova avviata' });
+      }
+      const transition = await deps.agentSessions.retry(id, override);
+      return {
+        objective: transition.objective,
+        session: transition.session,
+        project: transition.project,
+        checkpoint: transition.checkpoint,
+      };
+    } catch (err) {
+      if (err instanceof SessionStateError) {
+        return reply.code(400).send({ message: err.message });
+      }
+      if (err instanceof DecisionStateError || err instanceof DecisionTerminalError) {
+        return reply.code(409).send({ message: err.message });
       }
       throw err;
     }
@@ -380,6 +502,16 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.post('/api/objectives/:id/cancel', async (req, reply) => {
     const { id } = req.params as { id: string };
     try {
+      // Chiude anche i checkpoint pendenti (decisione CANCEL) così l'obiettivo
+      // annullato non resta in «Richiede te» (§5.1 V2: nessuna azione residua).
+      const pending = deps.checkpoints.listByObjective(id).filter((c) => c.status === 'PENDING_DECISION');
+      for (const checkpoint of pending) {
+        try {
+          deps.decisions.decide(checkpoint.id, { decisionType: 'CANCEL', note: 'Obiettivo annullato' });
+        } catch (err) {
+          if (!(err instanceof DecisionTerminalError)) throw err;
+        }
+      }
       const cancelled = deps.objectives.cancel(id);
       if (!cancelled) {
         return reply.code(404).send({ message: 'Obiettivo non trovato' });
@@ -388,6 +520,9 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     } catch (err) {
       if (err instanceof ObjectiveStateError) {
         return reply.code(400).send({ message: err.message });
+      }
+      if (err instanceof DecisionStateError || err instanceof DecisionTerminalError) {
+        return reply.code(409).send({ message: err.message });
       }
       throw err;
     }
@@ -462,4 +597,32 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
 
   app.post('/api/notifications/read-all', async () => ({ count: deps.notifications.markAllAsRead() }));
   app.post('/api/backups', async (_req, reply) => reply.code(201).send({ backup: deps.backups.create() }));
+
+  // ── §19: workspace Git isolate ─────────────────────────────────────
+  app.get('/api/workspaces', async () => ({ workspaces: deps.workspaces.list() }));
+  app.get('/api/projects/:id/workspaces', async (req) => {
+    const { id } = req.params as { id: string };
+    return { workspaces: deps.workspaces.listByProject(id) };
+  });
+
+  // Riconciliazione esplicita dello stato persistito con i worktree reali
+  // (§19.5): utile dopo un crash o come verifica manuale.
+  app.post('/api/workspaces/reconcile', async () => ({
+    reconciled: await deps.workspaces.reconcile(),
+  }));
+
+  app.post('/api/workspaces/:id/cleanup', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { force?: boolean };
+    try {
+      const workspace = await deps.workspaces.cleanup(id, body.force === true);
+      if (!workspace) return reply.code(404).send({ message: 'Workspace non trovata' });
+      return { workspace };
+    } catch (err) {
+      if (err instanceof WorktreeError) {
+        return reply.code(409).send({ message: err.message });
+      }
+      return reply.code(400).send({ message: err instanceof Error ? err.message : 'Rimozione non riuscita' });
+    }
+  });
 }

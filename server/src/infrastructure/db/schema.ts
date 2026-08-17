@@ -13,9 +13,10 @@ import type { DatabaseSync } from 'node:sqlite';
  * v6 → M7 autenticazione applicativa (tabella auth per password hash).
  * v7 → M8 heartbeat, last_heartbeat_at su sessioni; category su eventi
  *   (USER/TECHNICAL/AGENT per §11 separazione log).
+ * v13 → §19 workspace Git isolate (tabella workspaces, colonna sessions.workspace_id).
  * La migrazione è idempotente: DDL IF NOT EXISTS + ALTER TABLE colonne mancanti.
  */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 13;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -148,6 +149,8 @@ CREATE TABLE IF NOT EXISTS execution_attempts (
   input_tokens INTEGER,
   output_tokens INTEGER,
   total_tokens INTEGER,
+  cached_input_tokens INTEGER,
+  cached_output_tokens INTEGER,
   cost_estimate REAL,
   cost_actual REAL,
   metadata TEXT
@@ -200,6 +203,31 @@ CREATE TABLE IF NOT EXISTS auth (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- v13 §19: workspace Git isolate (worktree + branch dedicato).
+-- Il record è l'associazione persistita e auditabile tra Objective,
+-- branch dedicato e percorso isolato. La rimozione fisica del worktree
+-- avviene solo quando il lavoro è integrato o esplicitamente richiesta.
+CREATE TABLE IF NOT EXISTS workspaces (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  objective_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  repository_path TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  branch TEXT NOT NULL,
+  base_ref TEXT,
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
+  status_reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_used_at TEXT,
+  integrated_at TEXT,
+  error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_objective_id ON workspaces (objective_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces (status);
 `;
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
@@ -219,6 +247,8 @@ export function applySchema(db: DatabaseSync): void {
   // Migrazione v4 → v5: colonne lifecycle sui checkpoints per M5.
   ensureColumn(db, 'checkpoints', 'decided_at', 'decided_at TEXT');
   ensureColumn(db, 'checkpoints', 'decision_type', 'decision_type TEXT');
+  // M19: dettagli tecnici grezzi per gli errori (espansione «Dettagli tecnici»).
+  ensureColumn(db, 'checkpoints', 'technical_details', 'technical_details TEXT');
   ensureColumn(db, 'execution_attempts', 'metadata', 'metadata TEXT');
   // Migrazione v6 → v7: M8 heartbeat, last_heartbeat_at su sessioni; category su eventi.
   ensureColumn(db, 'sessions', 'heartbeat_interval_ms', 'heartbeat_interval_ms INTEGER');
@@ -230,11 +260,15 @@ export function applySchema(db: DatabaseSync): void {
   ensureColumn(db, 'execution_attempts', 'input_tokens', 'input_tokens INTEGER');
   ensureColumn(db, 'execution_attempts', 'output_tokens', 'output_tokens INTEGER');
   ensureColumn(db, 'execution_attempts', 'total_tokens', 'total_tokens INTEGER');
+  ensureColumn(db, 'execution_attempts', 'cached_input_tokens', 'cached_input_tokens INTEGER');
+  ensureColumn(db, 'execution_attempts', 'cached_output_tokens', 'cached_output_tokens INTEGER');
   ensureColumn(db, 'execution_attempts', 'cost_estimate', 'cost_estimate REAL');
   ensureColumn(db, 'execution_attempts', 'cost_actual', 'cost_actual REAL');
   ensureColumn(db, 'projects', 'policy_json', 'policy_json TEXT');
   ensureColumn(db, 'objectives', 'policy_json', 'policy_json TEXT');
   ensureColumn(db, 'objectives', 'estimated_cost', 'estimated_cost REAL');
+  // Migrazione v13: associazione sessione → workspace Git isolata (§19).
+  ensureColumn(db, 'sessions', 'workspace_id', 'workspace_id TEXT');
   // Migrazione v7: tabella notifications per M8.
   // Tabella già creata nel DDL, ma serve per vecchi DB.
   // (DDL IF NOT EXISTS la crea se manca)

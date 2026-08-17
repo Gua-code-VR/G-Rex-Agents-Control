@@ -24,7 +24,7 @@ interface ExecutionAttemptRow {
   reason: string | null;
   error_class: string | null;
   fallback_of_attempt_id: string | null;
-  input_tokens: number | null; output_tokens: number | null; total_tokens: number | null; cost_estimate: number | null; cost_actual: number | null;
+  input_tokens: number | null; output_tokens: number | null; total_tokens: number | null; cached_input_tokens: number | null; cached_output_tokens: number | null; cost_estimate: number | null; cost_actual: number | null;
   metadata: string | null;
 }
 
@@ -55,7 +55,7 @@ function toExecutionAttempt(row: ExecutionAttemptRow): ExecutionAttempt {
     reason: row.reason,
     errorClass: row.error_class,
     fallbackOfAttemptId: row.fallback_of_attempt_id,
-    inputTokens: row.input_tokens, outputTokens: row.output_tokens, totalTokens: row.total_tokens, costEstimate: row.cost_estimate, costActual: row.cost_actual,
+    inputTokens: row.input_tokens, outputTokens: row.output_tokens, totalTokens: row.total_tokens, cachedInputTokens: row.cached_input_tokens, cachedOutputTokens: row.cached_output_tokens, costEstimate: row.cost_estimate, costActual: row.cost_actual,
     metadata: parseMetadata(row.metadata),
   };
 }
@@ -65,6 +65,8 @@ export interface ExecutionAttemptRepository {
   getById(id: string): ExecutionAttempt | null;
   listBySession(sessionId: string): ExecutionAttempt[];
   update(id: string, input: UpdateExecutionAttemptInput): ExecutionAttempt | null;
+  /** Costo totale (actual o estimate) degli attempt avviati oggi (UTC). */
+  sumCostToday(): number;
 }
 
 export class SqliteExecutionAttemptRepository implements ExecutionAttemptRepository {
@@ -72,17 +74,18 @@ export class SqliteExecutionAttemptRepository implements ExecutionAttemptReposit
   private readonly getStmt: StatementSync;
   private readonly listBySessionStmt: StatementSync;
   private readonly updateStmt: StatementSync;
+  private readonly sumCostTodayStmt: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.insertStmt = db.prepare(
       `INSERT INTO execution_attempts
          (id, session_id, attempt_index, runtime_type, runtime_name, provider_name, model_name,
           process_reference, status, started_at, ended_at, duration_ms, exit_code, reason,
-          error_class, fallback_of_attempt_id, input_tokens, output_tokens, total_tokens, cost_estimate, cost_actual, metadata)
+          error_class, fallback_of_attempt_id, input_tokens, output_tokens, total_tokens, cached_input_tokens, cached_output_tokens, cost_estimate, cost_actual, metadata)
        VALUES
          (:id, :sessionId, :attemptIndex, :runtimeType, :runtimeName, :providerName, :modelName,
           :processReference, :status, :startedAt, :endedAt, :durationMs, :exitCode, :reason,
-          :errorClass, :fallbackOfAttemptId, :inputTokens, :outputTokens, :totalTokens, :costEstimate, :costActual, :metadata)`,
+          :errorClass, :fallbackOfAttemptId, :inputTokens, :outputTokens, :totalTokens, :cachedInputTokens, :cachedOutputTokens, :costEstimate, :costActual, :metadata)`,
     );
     this.getStmt = db.prepare('SELECT * FROM execution_attempts WHERE id = ?');
     this.listBySessionStmt = db.prepare(
@@ -98,11 +101,17 @@ export class SqliteExecutionAttemptRepository implements ExecutionAttemptReposit
            input_tokens = :inputTokens,
            output_tokens = :outputTokens,
            total_tokens = :totalTokens,
+            cached_input_tokens = :cachedInputTokens,
+            cached_output_tokens = :cachedOutputTokens,
            cost_estimate = :costEstimate,
            cost_actual = :costActual,
            metadata = :metadata,
            status = :status
        WHERE id = :id`,
+    );
+    this.sumCostTodayStmt = db.prepare(
+      `SELECT COALESCE(SUM(COALESCE(cost_actual, cost_estimate, 0)), 0) AS total
+       FROM execution_attempts WHERE started_at >= ?`,
     );
   }
 
@@ -134,7 +143,7 @@ export class SqliteExecutionAttemptRepository implements ExecutionAttemptReposit
       reason: null,
       errorClass: null,
       fallbackOfAttemptId: input.fallbackOfAttemptId ?? null,
-      inputTokens: null, outputTokens: null, totalTokens: null, costEstimate: null, costActual: null,
+      inputTokens: null, outputTokens: null, totalTokens: null, cachedInputTokens: null, cachedOutputTokens: null, costEstimate: null, costActual: null,
       metadata,
     });
     return this.getById(id)!;
@@ -165,10 +174,16 @@ export class SqliteExecutionAttemptRepository implements ExecutionAttemptReposit
       exitCode: input.exitCode ?? null,
       reason: input.reason ?? null,
       errorClass: input.errorClass ?? null,
-      inputTokens: input.inputTokens ?? null, outputTokens: input.outputTokens ?? null, totalTokens: input.totalTokens ?? null, costEstimate: input.costEstimate ?? null, costActual: input.costActual ?? null,
+      inputTokens: input.inputTokens ?? null, outputTokens: input.outputTokens ?? null, totalTokens: input.totalTokens ?? null, cachedInputTokens: input.cachedInputTokens ?? null, cachedOutputTokens: input.cachedOutputTokens ?? null, costEstimate: input.costEstimate ?? null, costActual: input.costActual ?? null,
       status,
       metadata: input.metadata ? JSON.stringify(input.metadata) : null,
     });
     return this.getById(id);
+  }
+
+  sumCostToday(): number {
+    const day = new Date().toISOString().slice(0, 10);
+    const row = this.sumCostTodayStmt.get(day) as { total: number } | undefined;
+    return Number(row?.total ?? 0);
   }
 }

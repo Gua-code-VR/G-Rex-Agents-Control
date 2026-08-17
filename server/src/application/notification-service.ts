@@ -18,6 +18,9 @@ export const NOTIFICATION_TYPES = [
   'SYSTEM_STARTUP_RECOVERY',
   'HEARTBEAT_MISSING',
   'BUDGET_POLICY',
+  // §19: workspace Git isolate
+  'WORKSPACE_BLOCKED',
+  'WORKSPACE_INTEGRATION_REQUIRED',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

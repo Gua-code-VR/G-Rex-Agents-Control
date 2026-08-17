@@ -161,12 +161,21 @@ d'ambiente opzionali:
 
 | Variabile | Default | Descrizione |
 | --- | --- | --- |
-| `GAC_HOST` | `127.0.0.1` | Bind del server API (mantenere locale) |
+| `GAC_HOST` | `127.0.0.1` | Indirizzo di bind (legacy; `GAC_BIND_ADDRESS` ha precedenza) |
+| `GAC_BIND_ADDRESS` | `127.0.0.1` | Indirizzo di bind esplicito (`0.0.0.0` per Tailscale/VPN) |
+| `GAC_BIND_ALL` | `false` | Alias booleano: `true` equivale a `GAC_BIND_ADDRESS=0.0.0.0` |
 | `GAC_PORT` | `3000` | Porta del server API |
 | `GAC_DATA_DIR` | `./data` | Cartella di persistenza (SQLite) |
 | `GAC_LOG_LEVEL` | `info` | Livello di log Fastify |
 | `GAC_CLINE_COMMAND` | `cline` | Comando della CLI Cline (percorso o nome sul PATH) |
 | `GAC_CLINE_ENABLED` | `true` | Abilita l'adapter Cline (`false` per disabilitarlo) |
+| `GAC_CLINE_PROVIDER` | `cline` | ID del provider API da passare alla CLI Cline (`--provider`) |
+| `GAC_CLINE_MODEL` | — | Modello Cline predefinito da passare alla CLI (`--model`) ed esporre nel catalogo |
+| `GAC_CLINE_INPUT_PRICE_PER_MILLION` | — | Prezzo input ($/M token) per la stima di costo del modello Cline |
+| `GAC_CLINE_OUTPUT_PRICE_PER_MILLION` | — | Prezzo output ($/M token) per la stima di costo del modello Cline |
+| `GAC_PRICING_FILE` | `./data/pricing.json` | File JSON dei provider diretti Cline (prezzi + finestra di contesto), riletto periodicamente; resta solo **fallback** quando l'archivio G-Rex Pricing è assente |
+| `GAC_PRICING_REFRESH_MS` | `60000` | Intervallo (ms) di rilettura del file prezzi (`0` disabilita il refresh) |
+| `GAC_PRICING_ARCHIVE_DIR` | `./data/g-rex-pricing-archive` | Directory dell'archivio prodotto da G-Rex Pricing (fonte unica dei listini); quando l'archivio è valido prende la precedenza su `GAC_PRICING_FILE` |
 | `GAC_AGENT_MODE` | `cline` | Adapter agente: `fake` (demo/test) o `cline` |
 | `GAC_DEFAULT_RUNTIME` | `cline` | Runtime predefinito per i nuovi obiettivi (sostituisce `GAC_AGENT_MODE`, mantenuto come alias) |
 | `GAC_CODEX_COMMAND` | `codex` | Comando della Codex CLI sul PATH |
@@ -176,6 +185,28 @@ d'ambiente opzionali:
 | `GAC_EXECUTION_RETRY_BACKOFF_MS` | `1000` | Backoff lineare tra retry e fallback |
 | `GAC_EXECUTION_FALLBACK_RUNTIME` | — | Runtime alternativo dopo l’esaurimento dei retry |
 | `GAC_EXECUTION_COST_BUDGET` | — | Budget massimo globale di costo per attempt (governance/alert) |
+
+### Accesso remoto via Tailscale
+
+Per raggiungere Agent Control dal telefono (o da un altro dispositivo) sulla
+rete Tailscale, avvia il server con il bind address esplicito:
+
+```
+GAC_BIND_ADDRESS=0.0.0.0 GAC_PORT=3000 npm start
+```
+
+(oppure `GAC_BIND_ALL=true`). Il servizio ascolta su tutte le interfacce, ma:
+
+- l'intera API (`/api/*`) resta protetta da autenticazione (M7): dal telefono si
+  apre `http://<ip-tailscale-del-pc>:3000` e si imposta/accede con la password;
+- il CORS ammette già gli origin Tailscale (`100.x.x.x`) e le subnet private,
+  quindi la PWA servita dalla stessa porta funziona senza configurazione extra;
+- non esporre la porta su internet pubblico: l'ascolto su `0.0.0.0` è pensato
+  solo per la rete privata Tailscale (§14).
+
+Imposta la password di amministrazione **prima** di abilitare l'ascolto remoto,
+per evitare che il setup iniziale (`/api/auth/setup`) sia raggiungibile da altri
+nodi della rete.
 
 ### M12 — policy e governance per progetto/obiettivo
 
@@ -220,11 +251,25 @@ effettiva e la motivazione della scelta sono persistite nei metadati di ogni
 `ExecutionAttempt` ed esposte dallo storico API/UI. Se il runtime non viene
 indicato, M16 applica il routing automatico governato; il fallback resta una
 policy configurata e validata.
+
+### M18 — selezione automatica provider diretto + modello per attempt
+
+Prima di ogni attempt Cline, il router sceglie provider diretto e modello in
+base a costo, contesto (finestra di token), budget residuo e affidabilità.
+I listini provengono dall'archivio **G-Rex Pricing** (fonte unica, di default
+in `./data/g-rex-pricing-archive`); in assenza di archivio valido resta il file
+JSON locale (`GAC_PRICING_FILE`) riletto periodicamente (`GAC_PRICING_REFRESH_MS`),
+con fallback alle env singole pre-M18. Ogni modello può avere pricing piatto o
+per fascia oraria (UTC) e scaglioni cache hit/miss. Un modello la cui finestra
+di contesto è inferiore ai token stimati viene escluso.
+A ogni retry/fallback il provider+modello viene ri-scelto dal router; una
+selezione esplicita resta prevalente (ri-validata come in M15).
 | `GAC_HEARTBEAT_INTERVAL_MS` | `30000` | Intervallo massimo senza heartbeat prima di dichiarare una sessione stale |
 | `GAC_STALE_CHECK_INTERVAL_MS` | `30000` | Frequenza del controllo automatico delle sessioni stale |
 
-> Per l'invariante di sicurezza (§14) non va configurato un host pubblico
-> (es. `0.0.0.0`).
+> Per l'invariante di sicurezza (§14) non va esposto il servizio su internet
+> pubblico. L'ascolto su `0.0.0.0` è consentito solo su rete privata
+> (Tailscale/VPN), dove l'accesso resta protetto da autenticazione (M7).
 
 ### M8 — robustezza operativa
 

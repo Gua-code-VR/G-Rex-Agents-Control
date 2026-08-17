@@ -28,7 +28,7 @@ describe('CLI runtime availability', () => {
     expect(cline.isConfigured()).toBe(true);
     expect(new CodexProvider().isConfigured()).toBe(true);
     await cline.start({ objectiveId: 'o1', projectPath: null, objectiveText: 'test', stopCondition: null });
-    expect(spawn).toHaveBeenCalledWith('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'C:\\tools\\cline.ps1', '--headless', '--json'], expect.any(Object));
+    expect(spawn).toHaveBeenCalledWith('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'C:\\tools\\cline.ps1', '--json', 'test'], expect.any(Object));
   });
 
   it('keeps explicitly disabled runtimes unavailable', () => {
@@ -37,6 +37,63 @@ describe('CLI runtime availability', () => {
     expect(new ClineProvider('cline', false).isConfigured()).toBe(false);
     expect(new CodexProvider('codex', false).isConfigured()).toBe(false);
     expect(spawnSync).not.toHaveBeenCalled();
+  });
+
+  it('forwards explicit provider/model selection to the Cline CLI', async () => {
+    spawn.mockClear();
+    spawnSync.mockClear();
+    spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'powershell.exe' && args.includes('-Command')) {
+        return { status: 0, stdout: 'ExternalScript\tC:\\tools\\cline.ps1\n' };
+      }
+      return { status: 0, stdout: 'version\n' };
+    });
+    const child = { pid: 3, stdin: { write: vi.fn(), end: vi.fn() }, stdout: { setEncoding: vi.fn(), on: vi.fn() }, stderr: { setEncoding: vi.fn(), on: vi.fn() }, once: vi.fn(), killed: false };
+    spawn.mockReturnValue(child);
+
+    await new ClineProvider('cline-explicit').start({
+      objectiveId: 'o-explicit', projectPath: null, objectiveText: 'test', stopCondition: null,
+      providerId: 'openrouter', model: 'anthropic/claude-sonnet-4',
+    });
+    expect(spawn).toHaveBeenCalledWith('powershell.exe', [
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'C:\\tools\\cline.ps1',
+      '--json', '--provider', 'openrouter', '--model', 'anthropic/claude-sonnet-4', 'test',
+    ], expect.any(Object));
+  });
+
+  it('emits runtime approval events and extracts the final report from NDJSON output', async () => {
+    spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'powershell.exe' && args.includes('-Command')) {
+        return { status: 0, stdout: 'Application\tC:\\tools\\cline.exe\n' };
+      }
+      return { status: 0, stdout: 'version\n' };
+    });
+    const stdout = new (await import('node:events')).EventEmitter() as any;
+    const child = {
+      pid: 5,
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { setEncoding: vi.fn(), on: (ev: string, cb: Function) => { if (ev === 'data') stdout.on('data', cb as (...args: unknown[]) => void); } },
+      stderr: { setEncoding: vi.fn(), on: vi.fn() },
+      once: (ev: string, cb: Function) => { if (ev === 'exit') setTimeout(() => cb(0, null), 10); },
+      killed: false,
+      exitCode: null,
+    };
+    spawn.mockReturnValue(child);
+    const onEvent = vi.fn();
+    const provider = new ClineProvider('cline-report');
+
+    const handle = await provider.start({
+      objectiveId: 'o-report', projectPath: null, objectiveText: 'do work', stopCondition: null,
+      onEvent,
+    });
+
+    stdout.emit('data', JSON.stringify({ type: 'ask', ask: 'tool', text: 'May I run rm -rf /tmp/x?' }) + '\n');
+    stdout.emit('data', JSON.stringify({ type: 'say', text: 'Lavoro completato: 12 test verdi.' }) + '\n');
+
+    const result = await handle.completion;
+    expect(result.outcome).toBe('COMPLETED');
+    expect(result.report).toBe('Lavoro completato: 12 test verdi.');
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'approval', approval: expect.objectContaining({ action: 'tool', detail: 'May I run rm -rf /tmp/x?' }) }));
   });
 
   it('emits heartbeat while a silent Cline process is still alive', async () => {
@@ -58,5 +115,25 @@ describe('CLI runtime availability', () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(onEvent).toHaveBeenCalledWith({ type: 'heartbeat', metadata: { source: 'process_alive' } });
+  });
+
+  it('builds Codex exec args without --sandbox when --approve-for-me is used (compat 0.147)', async () => {
+    spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'powershell.exe' && args.includes('-Command')) {
+        return { status: 0, stdout: 'Application\tC:\\tools\\codex.exe\n' };
+      }
+      return { status: 0, stdout: 'version\n' };
+    });
+    const child = { pid: 7, stdin: { write: vi.fn(), end: vi.fn() }, stdout: { setEncoding: vi.fn(), on: vi.fn() }, stderr: { setEncoding: vi.fn(), on: vi.fn() }, once: vi.fn(), killed: false, exitCode: null };
+    spawn.mockReturnValue(child);
+    spawn.mockClear();
+
+    await new CodexProvider('codex').start({ objectiveId: 'o-codex', projectPath: null, objectiveText: 'test', stopCondition: null });
+
+    const args = spawn.mock.calls[0][1] as string[];
+    expect(args).toContain('--approve-for-me');
+    expect(args).toContain('--json');
+    expect(args).not.toContain('--sandbox');
+    expect(args).not.toContain('workspace-write');
   });
 });

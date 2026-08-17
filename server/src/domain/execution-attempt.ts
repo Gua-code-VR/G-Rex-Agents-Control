@@ -21,6 +21,8 @@ export interface ExecutionAttempt {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
+  cachedInputTokens: number | null;
+  cachedOutputTokens: number | null;
   costEstimate: number | null;
   costActual: number | null;
   metadata: unknown | null;
@@ -36,6 +38,7 @@ export interface CreateExecutionAttemptInput {
   metadata?: unknown | null;
   fallbackOfAttemptId?: string | null;
   inputTokens?: number | null; outputTokens?: number | null; totalTokens?: number | null; costEstimate?: number | null; costActual?: number | null;
+  cachedInputTokens?: number | null; cachedOutputTokens?: number | null;
 }
 
 export interface UpdateExecutionAttemptInput {
@@ -47,4 +50,5 @@ export interface UpdateExecutionAttemptInput {
   errorClass?: string | null;
   metadata?: unknown | null;
   inputTokens?: number | null; outputTokens?: number | null; totalTokens?: number | null; costEstimate?: number | null; costActual?: number | null;
+  cachedInputTokens?: number | null; cachedOutputTokens?: number | null;
 }
