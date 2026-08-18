@@ -1,7 +1,7 @@
 # G-Rex Agent Control
 
 **Documento di progettazione --- V2**\
-**Sorgente di verità corrente del prodotto · 16 agosto 2026**
+**Sorgente di verità corrente del prodotto · 18 agosto 2026**
 
 ## 0. Autorità e gerarchia documentale
 
@@ -27,8 +27,7 @@ checkpoint pendente e una decisione umana.
 
 ## 1. Scopo e principio di prodotto
 
-G-Rex Agent Control governa più agenti di sviluppo dal PC o dallo
-smartphone, riducendo al minimo il carico mentale dell'utente.
+G-Rex Agent Control governa obiettivi affidandone l’esecuzione a runtime, agenti e strumenti disponibili, dal PC o dallo smartphone, riducendo al minimo il carico mentale dell’utente. Il prodotto non è limitato allo sviluppo software: può orchestrare anche analisi, documenti, report, controlli e altre automazioni operative quando esiste un execution adapter idoneo.
 
 Agent Control non è un terminale remoto, non è una replica di VS Code e
 non è un visualizzatore di log. È il **piano di controllo operativo
@@ -75,10 +74,9 @@ La regola vale in modo uniforme per Control Room, Progetti, Obiettivi, Esecuzion
 
 ### 2.1 Progetto
 
-Il **Project** è un contenitore permanente associato a un repository.
+Il **Project** è un contenitore permanente di obiettivi e relativo contesto operativo. Quando il lavoro riguarda codice o file versionati, il Project può essere associato a un repository Git; per obiettivi non-Git il repository non è obbligatorio.
 
-Il repository viene configurato una volta e resta associato al progetto.
-Non deve essere richiesto nuovamente a ogni obiettivo.
+Quando presente, il repository viene configurato una volta e resta associato al progetto. Non deve essere richiesto nuovamente a ogni obiettivo.
 
 Un progetto può contenere nel tempo molti obiettivi. La conclusione di
 un obiettivo non implica la creazione di un nuovo progetto.
@@ -117,7 +115,17 @@ Nel caso ordinario di repository Git, la workspace è realizzata tramite **Git w
 
 La workspace è infrastruttura dell'esecuzione: non cambia l'identità del Project o dell'Objective e non richiede modifiche al modello del runtime. Cline, Codex e gli altri runtime ricevono semplicemente il percorso isolato come `projectPath`/`cwd`.
 
-### 2.6 Relazione
+### 2.6 Checkpoint operativo di ripresa
+
+Un **ExecutionCheckpoint** persistente rappresenta lo stato minimo sufficiente a continuare un Objective senza ricominciare da zero dopo crash, stop, riavvio, retry, fallback o cambio di runtime/provider/modello.
+
+Il checkpoint deve contenere almeno, quando applicabile: stato dell’Objective; fase corrente; ultimo passo completato; prossimo passo previsto; runtime/provider/modello dell’ultimo attempt; decisioni e vincoli importanti emersi durante il lavoro; file toccati; riferimenti agli output e artefatti parziali; identificativo della workspace/worktree quando presente.
+
+Il checkpoint non tenta di serializzare il ragionamento interno dell’agente. La continuità deriva dalla combinazione di **checkpoint strutturato + workspace persistente + output/eventi già prodotti**.
+
+Retry e fallback aggiornano il checkpoint ma non ne cambiano l’identità logica dell’Objective. Quando un Objective viene completato o cancellato, i checkpoint operativi pesanti vengono eliminati automaticamente dopo aver consolidato un riepilogo leggero e auditabile nello storico. La pulizia non deve eliminare output o workspace ancora necessari a integrazione, recovery o decisione umana.
+
+### 2.7 Relazione
 
 ``` text
 PROJECT / REPOSITORY
@@ -227,6 +235,14 @@ automatico.
 Solo quando il recovery è esaurito o impossibile, lo stato può diventare
 terminale e richiedere l'utente.
 
+### 4.6 Ripresa automatica e continuità
+
+Crash, stop tecnico, riavvio del Control Plane, perdita del processo, retry e fallback non devono causare la ripartenza dell’Objective da zero quando esistono stato e artefatti recuperabili.
+
+Prima di avviare un nuovo attempt Agent Control ricostruisce il contesto operativo dal checkpoint persistito, dalla workspace associata e dagli output/eventi già prodotti. Il nuovo runtime riceve le informazioni necessarie per continuare dal prossimo passo utile.
+
+Il cambio di runtime/provider/modello crea sempre un nuovo `ExecutionAttempt`, ma preserva Objective, workspace e checkpoint. Un nuovo attempt non equivale a un nuovo Objective.
+
 ------------------------------------------------------------------------
 
 ## 5. Richiede te
@@ -278,6 +294,18 @@ Solo una notifica actionable e ancora pendente può contribuire a
 
 Le notifiche informative possono essere consultabili o marcabili come
 lette, ma non devono alterare KPI o viste dedicate all'intervento umano.
+
+### 6.1 Notifiche esterne/mobile
+
+Agent Control supporta adapter di notifica esterni separati dal dominio. **Pushover è il primo adapter da implementare e validare**, senza rendere il prodotto dipendente in modo irreversibile da uno specifico servizio.
+
+Le notifiche push ordinarie sono limitate a tre categorie di valore operativo:
+
+- comparsa di una nuova condizione `Richiede te`;
+- completamento di un Objective;
+- Objective definitivamente bloccato dopo l’esaurimento dei recovery/fallback automatici.
+
+Retry, fallback, heartbeat, errori recuperati, cambi automatici di provider/modello e altri eventi tecnici non generano push ordinari. La deduplicazione deve evitare notifiche ripetute per la stessa condizione persistente.
 
 ------------------------------------------------------------------------
 
@@ -461,24 +489,31 @@ configurazioni tecniche già note.
 
 ## 12. Routing runtime/provider/modello
 
-Il routing automatico è il comportamento ordinario.
+Il routing automatico è il comportamento ordinario e riguarda **runtime, provider e modello** come tre livelli distinti. Cline, Codex e altri agenti/runtime sono strumenti dell’orchestratore e non costituiscono il centro del modello di prodotto.
 
-La scelta deve rispettare le specifiche tecniche correnti: - catalogo
-reale delle combinazioni disponibili; - capacità richieste; - finestra
-di contesto; - costo stimato; - budget residuo; - affidabilità
-storica; - apprendimento dalle esecuzioni precedenti.
+La scelta deve rispettare il catalogo reale delle combinazioni disponibili, capacità richieste, finestra di contesto, costo stimato, budget residuo, affidabilità storica e apprendimento dalle esecuzioni precedenti.
 
-Una selezione esplicita, quando supportata e realmente richiesta,
-prevale sul routing automatico ma deve essere validata dal catalogo.
+### 12.1 Disponibilità e quota Codex
 
-A ogni retry/fallback il provider/modello può essere ri-selezionato
-secondo la policy corrente.
+Quando Codex è configurato, Agent Control deve conoscere i modelli Codex realmente disponibili e leggere, per quanto tecnicamente esposto dal runtime/account, lo stato reale della quota: percentuale utilizzata/residua e momento di reset. Dati non disponibili non devono essere inventati o simulati.
 
-La scelta effettiva deve essere persistita nell'ExecutionAttempt ed
-essere auditabile.
+La quota effettiva concorre al routing: un modello/runtime senza capacità disponibile, in rate limit o non utilizzabile viene escluso temporaneamente dalla selezione.
 
-Le configurazioni di provider dismesse o escluse dal prodotto non devono
-essere reintrodotte da documentazione storica.
+### 12.2 Ordine economico e fallback
+
+La policy può privilegiare capacità già incluse nella quota o senza costo marginale, quindi modelli gratuiti realmente disponibili tramite provider configurati, e infine API a pagamento già configurate quali Qwen di Alibaba Cloud e DeepSeek. L’ordine concreto resta governato da capacità, affidabilità, contesto e costo atteso: “gratuito” non autorizza l’uso di un modello inadatto al compito.
+
+**OpenRouter è ammesso come provider di routing per modelli gratuiti realmente disponibili**, superando la precedente esclusione generale dal prodotto. Non deve però diventare un passaggio obbligatorio per Qwen, DeepSeek o altri provider configurati direttamente.
+
+Rate limit, indisponibilità, stallo o errore recuperabile possono causare la riselezione automatica di runtime/provider/modello. Ogni cambio crea un nuovo `ExecutionAttempt` auditabile.
+
+### 12.3 Continuità attraverso il routing
+
+Retry e fallback **non ripartono dall’inizio dell’Objective**. Il nuovo attempt continua dal checkpoint operativo e riutilizza la stessa workspace quando presente, preservando file e output parziali.
+
+Una selezione esplicita, quando supportata e realmente richiesta, prevale sul routing automatico ma deve essere validata dal catalogo. La scelta effettiva e la causa di ogni fallback devono essere persistite e auditabili.
+
+Le configurazioni di provider dismesse o escluse dal prodotto non devono essere reintrodotte da documentazione storica, salvo una nuova decisione esplicita recepita da questa V2.
 
 ------------------------------------------------------------------------
 
@@ -614,8 +649,7 @@ EXECUTION PLANE
 - Git
 ```
 
-Un runtime non modifica direttamente lo stato ufficiale di
-Objective/Project.
+Un runtime non modifica direttamente lo stato ufficiale di Objective/Project. I runtime sono adapter di esecuzione sostituibili: Agent Control orchestra l’Objective e può assegnarlo al runtime più adatto, anche per attività non strettamente di coding.
 
 Retry e fallback preservano lo storico e non creano nuovi Objective.
 
@@ -675,6 +709,7 @@ Dopo crash o riavvio del Control Plane, lo stato persistito delle workspace deve
 -   un errore diventa richiesta umana solo quando serve realmente;
 -   dopo riavvio, lo stato persistito deve essere riconciliato con i
     processi reali;
+-   checkpoint, workspace e output parziali devono consentire la ripresa dal prossimo passo utile senza ricominciare l’Objective;
 -   log utente, eventi tecnici e log grezzo restano separati;
 -   database/configurazione/report sono sottoposti a backup; i
     repository restano affidati a Git.
@@ -734,6 +769,12 @@ La UI ordinaria mostra un riepilogo comprensibile del consumo e del costo; il de
 28. Modifiche locali o conflitti che rendono insicura l'operazione non vengono ignorati: quando richiedono una scelta reale entrano in `Richiede te`.
 29. La gestione worktree resta separata dal `ProcessSupervisor` e non altera le responsabilità fondamentali dell'Execution Plane.
 30. Normalità = silenzio; eccezione = evidenza.
+31. Crash, stop, riavvio, retry e fallback non fanno ripartire da zero un Objective quando esiste stato recuperabile.
+32. Il cambio runtime/provider/modello crea un nuovo ExecutionAttempt ma preserva Objective, checkpoint e workspace.
+33. I checkpoint operativi pesanti vengono rimossi dopo completamento/cancellazione, conservando uno storico leggero e auditabile.
+34. Cline, Codex e gli altri runtime sono strumenti sostituibili dell’orchestratore; Agent Control orchestra Objective e non è un pannello dedicato a un singolo agente.
+35. Pushover è il primo adapter di push mobile; i push ordinari sono riservati a `Richiede te`, completamento e blocco definitivo.
+36. OpenRouter è ammesso per modelli gratuiti realmente disponibili; Qwen, DeepSeek e altri provider diretti non devono essere instradati obbligatoriamente attraverso OpenRouter.
 
 ------------------------------------------------------------------------
 
@@ -787,7 +828,23 @@ La UI ordinaria mostra un riepilogo comprensibile del consumo e del costo; il de
   Objective paralleli crea/riusa        lavoro isolato     **no**      no           sì
   stesso repository   worktree distinti in workspace Git                            
 
-  Dirty state         non procede se    problema corrente  **sì** se   no           sì
+  Crash/riavvio con   riprende dal       lavoro continua    **no**      no           sì
+  checkpoint valido    checkpoint         senza ripartenza
+
+  Cambio runtime/      nuovo attempt,      normalmente nessuna **no**      no           sì
+  provider/modello     stesso Objective    evidenza
+                       e workspace
+
+  Objective            invia push          risultato compatto  **no**      **sì**       sì
+  completato            Pushover
+
+  Nuovo `Richiede te`  invia push          evidenziato          **sì**      no           sì
+                       Pushover
+
+  Blocco definitivo    invia push          problema corrente    se serve    no           sì
+  dopo fallback         Pushover                                azione
+
+    Dirty state         non procede se    problema corrente  **sì** se   no           sì
   incompatibile       operazione non                        serve                    
                       sicura                                scelta                   
 
@@ -830,7 +887,16 @@ almeno queste invarianti con test:
 -   modifiche locali incompatibili nella working tree principale non vengono ignorate o sovrascritte;
 -   un conflitto reale di integrazione produce una richiesta umana senza perdita delle modifiche;
 -   crash/riavvio riconcilia lo stato persistito con worktree e branch realmente presenti;
--   la pulizia non elimina workspace con lavoro non integrato o ancora necessario.
+-   la pulizia non elimina workspace con lavoro non integrato o ancora necessario;
+-   crash/stop/riavvio con checkpoint valido riprende dal prossimo passo utile senza ricominciare l’Objective;
+-   il checkpoint conserva almeno fase, ultimo passo, prossimo passo, selezione runtime/provider/modello, decisioni, file e riferimenti agli output applicabili;
+-   retry o fallback con cambio runtime/provider/modello crea un nuovo attempt ma preserva Objective, checkpoint e workspace;
+-   checkpoint operativi pesanti vengono eliminati dopo completamento/cancellazione senza perdere il riepilogo storico;
+-   quota e reset Codex vengono rappresentati solo quando ottenuti da dati reali;
+-   indisponibilità/rate limit può provocare fallback automatico verso un’alternativa realmente configurata;
+-   OpenRouter, quando usato, resta opzionale e non sostituisce forzatamente provider diretti;
+-   Pushover notifica `Richiede te`, completamento e blocco definitivo senza notificare retry/heartbeat/recovery ordinari;
+-   un Objective non-Git può essere eseguito senza imporre repository o worktree quando non pertinenti.
 
 ------------------------------------------------------------------------
 
