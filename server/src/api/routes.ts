@@ -105,6 +105,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     );
     const dbExists = fs.existsSync(deps.config.dbPath);
     const dbSizeBytes = dbExists ? fs.statSync(deps.config.dbPath).size : 0;
+    const pendingCheckpoints = deps.checkpoints.countPending();
     return {
       generatedAt: new Date().toISOString(),
       projectsCount: projects.length,
@@ -112,7 +113,14 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       projectsByGroup,
       eventsCount: deps.events.count(),
       // M4: decisioni umane ancora da prendere (checkpoint PENDING_DECISION).
-      pendingDecisions: deps.checkpoints.countPending(),
+      pendingDecisions: pendingCheckpoints,
+      // §5 V2: numero esatto di azioni umane realmente pendenti (fonte unica
+      // per badge e KPI): checkpoint + approvazioni budget + approvazioni
+      // runtime. Notifiche non lette e sessioni STALE NON vi rientrano.
+      requiresYouCount:
+        pendingCheckpoints
+        + deps.governance.countPendingApprovals()
+        + deps.agentSessions.countRuntimeApprovals(),
       // Costo live rilevato oggi (fonte unica per l'header).
       costToday: deps.attempts.sumCostToday(),
       storage: {
@@ -504,12 +512,19 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     try {
       // Chiude anche i checkpoint pendenti (decisione CANCEL) così l'obiettivo
       // annullato non resta in «Richiede te» (§5.1 V2: nessuna azione residua).
+      // DecideForcefully è necessario perché l'annullamento è l'azione esplicita
+      // che legittima la chiusura anche di eventuali checkpoint obsoleti.
       const pending = deps.checkpoints.listByObjective(id).filter((c) => c.status === 'PENDING_DECISION');
       for (const checkpoint of pending) {
         try {
           deps.decisions.decide(checkpoint.id, { decisionType: 'CANCEL', note: 'Obiettivo annullato' });
         } catch (err) {
-          if (!(err instanceof DecisionTerminalError)) throw err;
+          if (err instanceof DecisionTerminalError) continue;
+          if (err instanceof DecisionStateError) {
+            deps.decisions.decideForcefully(checkpoint.id, { decisionType: 'CANCEL', note: 'Obiettivo annullato (checkpoint obsoleto)' });
+            continue;
+          }
+          throw err;
         }
       }
       const cancelled = deps.objectives.cancel(id);

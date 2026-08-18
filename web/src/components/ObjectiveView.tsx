@@ -15,25 +15,7 @@ import {
 } from '../api/client';
 import { CheckpointList } from './CheckpointList';
 import { catalogEntriesFor, defaultModelId, modelsForProvider, providersForRuntime } from '../lib/provider-catalog';
-
-const OBJECTIVE_STATUS_LABEL: Record<Objective['status'], string> = {
-  IN_AVVIO: 'In avvio',
-  IN_LAVORAZIONE: 'In lavorazione',
-  RICHIEDE_ATTENZIONE: 'Richiede attenzione',
-  BLOCCATO: 'Bloccato',
-  COMPLETATO: 'Completato',
-  ERRORE: 'Errore',
-  ANNULLATO: 'Annullato',
-};
-const SESSION_STATUS_LABEL: Record<AgentSession['status'], string> = {
-  IN_AVVIO: 'In avvio',
-  ATTIVA: 'Attiva',
-  COMPLETATA: 'Completata',
-  ERRORE: 'Errore',
-  INTERROTTA: 'Interrotta',
-  BLOCCATA: 'Bloccata',
-  STALE: 'Inattiva',
-};
+import { OBJECTIVE_STATUS_LABEL, SESSION_STATUS_LABEL } from '../lib/labels';
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('it-IT');

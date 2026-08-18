@@ -11,32 +11,10 @@ import {
   type HealthResponse,
   type Objective,
   type Project,
+  type RuntimeApproval,
 } from '../api/client';
 import { computeRequiresYou } from '../lib/requires-you';
-
-const OBJECTIVE_STATUS_LABEL: Record<Objective['status'], string> = {
-  IN_AVVIO: 'In avvio',
-  IN_LAVORAZIONE: 'In lavorazione',
-  RICHIEDE_ATTENZIONE: 'Richiede attenzione',
-  BLOCCATO: 'Bloccato',
-  COMPLETATO: 'Completato',
-  ERRORE: 'Errore',
-  ANNULLATO: 'Annullato',
-};
-const SESSION_STATUS_LABEL: Record<AgentSession['status'], string> = {
-  IN_AVVIO: 'In avvio',
-  ATTIVA: 'Attiva',
-  COMPLETATA: 'Completata',
-  ERRORE: 'Errore',
-  INTERROTTA: 'Interrotta',
-  BLOCCATA: 'Bloccata',
-  STALE: 'Inattiva',
-};
-const GROUP_LABEL: Record<Project['statusGroup'], string> = {
-  FERMO: 'Fermo',
-  IN_LAVORAZIONE: 'In lavorazione',
-  PROBLEMA: 'Con problema',
-};
+import { GROUP_LABEL, OBJECTIVE_STATUS_LABEL, SESSION_STATUS_LABEL } from '../lib/labels';
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('it-IT');
@@ -82,11 +60,13 @@ export function ControlRoom({
 }: ControlRoomProps) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [approvals, setApprovals] = useState<GovernanceApproval[]>([]);
+  const [runtimeApprovals, setRuntimeApprovals] = useState<RuntimeApproval[]>([]);
   const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
   const [attemptsBySession, setAttemptsBySession] = useState<Record<string, ExecutionAttempt[]>>({});
 
   const loadApprovals = () => {
     void api.listGovernanceApprovals().then((r) => setApprovals(r.approvals)).catch(() => setApprovals([]));
+    void api.listRuntimeApprovals().then((r) => setRuntimeApprovals(r.approvals)).catch(() => setRuntimeApprovals([]));
   };
 
   useEffect(() => {
@@ -110,12 +90,12 @@ export function ControlRoom({
   const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p] as const)), [projects]);
   const objectiveById = useMemo(() => new Map(objectives.map((o) => [o.id, o] as const)), [objectives]);
 
-  const activeObjectives = objectives.filter((o) => o.status === 'IN_LAVORAZIONE');
   const waitingObjectives = objectives.filter((o) => o.status === 'IN_AVVIO');
   const errorObjectives = objectives.filter((o) => o.status === 'ERRORE');
   const { pendingApprovals, pendingCheckpoints } = computeRequiresYou({
     checkpoints: Object.values(checkpointsByObjective).flat(),
     approvals,
+    runtimeApprovals,
   });
   const pendingErrorCheckpoints = pendingCheckpoints.filter((c) => c.outcome === 'ERROR');
   const pendingResultCheckpoints = pendingCheckpoints.filter((c) => c.outcome !== 'ERROR');
@@ -160,7 +140,9 @@ export function ControlRoom({
   const completedObjectives = objectives.filter((o) => o.status === 'COMPLETATO');
   const recentCompletions = completedObjectives.slice(-6).reverse();
 
-  const needsYouCount = pendingCheckpoints.length + pendingApprovals.length;
+  // «Richiede te» con la stessa semantica di RequiresYouView e del badge:
+  // checkpoint pendenti + approvazioni budget + approvazioni runtime.
+  const needsYouCount = pendingCheckpoints.length + pendingApprovals.length + runtimeApprovals.length;
   const recentEvents = events.slice(-10).reverse();
 
   const systemOk = health?.status === 'ok' || health?.status === 'OK' || health?.status === 'healthy';
@@ -169,7 +151,9 @@ export function ControlRoom({
     <div className="control-room">
       <section className="control-kpis" aria-label="Sintesi operativa">
         <div className="kpi kpi-active">
-          <span className="kpi-value">{activeObjectives.length + activeSessions.length}</span>
+          {/* Solo esecuzioni realmente attive (sessione ATTIVA): l'obiettivo e
+              la sua sessione non vengono contati due volte (§1.1 V2). */}
+          <span className="kpi-value">{activeSessions.filter((r) => r.session.status === 'ATTIVA').length}</span>
           <span className="kpi-label">Attivi</span>
         </div>
         <div className="kpi kpi-waiting">

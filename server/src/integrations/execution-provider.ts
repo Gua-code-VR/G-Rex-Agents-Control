@@ -204,6 +204,7 @@ abstract class LocalCliProvider implements ExecutionProvider {
       child.once('error', (error) => {
         stopHeartbeat();
         child.stdin?.end();
+        this.processes.delete(processReference);
         resolve({ outcome: 'FAILED', exitCode: null, reason: error.message, errorClass: 'AGENT_ERROR' });
       });
       child.once('exit', (code, signal) => {
@@ -217,7 +218,11 @@ abstract class LocalCliProvider implements ExecutionProvider {
           exitCode: code,
           reason: cancelled ? `Processo terminato (${signal})` : code === 0 ? null : extractErrorMessage(raw) || `Exit code ${code}`,
           report: code === 0 ? extractFinalReport(raw) : null,
-          errorClass: code === 0 ? null : /econn|timeout|network|unauthorized|authenticat|re-authenticate|api ?key|credential|401/i.test(raw) ? 'CONNECTIVITY_ERROR' : 'AGENT_ERROR',
+          errorClass: code === 0 ? null : /econn|timeout|network|unauthorized|authenticat|re-authenticate|api ?key|credential|401/i.test(raw)
+            ? 'CONNECTIVITY_ERROR'
+            : /sessionruntime|shutdown called while a run is in progress/i.test(raw)
+              ? 'AGENT_CONTROL_ERROR'
+              : 'AGENT_ERROR',
           metadata: { signal, output: raw.slice(-4000) },
           usage: accumulateUsage(raw),
         });
@@ -228,7 +233,19 @@ abstract class LocalCliProvider implements ExecutionProvider {
 
   async stop(processReference: string): Promise<void> {
     const child = this.processes.get(processReference);
-    if (child && !child.killed) child.kill();
+    if (!child || child.killed || child.exitCode !== null) return;
+    // Terminazione controllata: SIGTERM, poi escalation a SIGKILL se il
+    // processo non esce entro 1,5 s. La CLI può stampare «SessionRuntime.shutdown
+    // called while a run is in progress» durante l'arresto: è il runtime che
+    // riporta lo shutdown della sessione mentre il run è ancora aperto. Agent
+    // Control ha già dichiarato la sessione non più ATTIVA prima di fermare il
+    // processo, quindi il messaggio resta diagnostica di audit e non genera
+    // transizioni di stato né interruzioni improprie.
+    child.kill('SIGTERM');
+    setTimeout(() => {
+      const pending = this.processes.get(processReference);
+      if (pending && pending.exitCode === null) pending.kill('SIGKILL');
+    }, 1500).unref?.();
   }
 
   async respondApproval(processReference: string, requestId: string, approved: boolean): Promise<void> {

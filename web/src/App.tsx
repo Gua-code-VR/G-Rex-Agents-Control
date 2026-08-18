@@ -7,7 +7,6 @@ import {
   type EventRecord,
   type Objective,
   type Project,
-  type SessionStatus,
   type StatusResponse,
   type Checkpoint,
   type Notification,
@@ -16,6 +15,7 @@ import {
 } from './api/client';
 import { AppShell } from './components/AppShell';
 import { summarizeEventPayload } from './lib/event-summary';
+import { SESSION_STATUS_LABEL } from './lib/labels';
 import { ControlRoom } from './components/ControlRoom';
 import { ExecutionsView } from './components/ExecutionsView';
 import { ObjectiveView } from './components/ObjectiveView';
@@ -28,11 +28,6 @@ import type { NavSection } from './components/Sidebar';
 import { SettingsPage } from './components/SettingsPage';
 
 type LoadState = 'loading' | 'ready' | 'error';
-
-const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
-  IN_AVVIO: 'In avvio', ATTIVA: 'Attiva', COMPLETATA: 'Completata',
-  ERRORE: 'Errore', INTERROTTA: 'Interrotta', BLOCCATA: 'Bloccata', STALE: 'Inattiva',
-};
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('it-IT');
@@ -54,7 +49,7 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(true);
   const [checkingAuth, setCheckingAuth] = useState(true);
   // Data
-  const [, setStatus] = useState<StatusResponse | null>(null);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [historyEvents, setHistoryEvents] = useState<EventRecord[]>([]);
@@ -205,7 +200,11 @@ export default function App() {
     return <LoginPage onAuthenticated={() => { setAuthenticated(true); }} />;
   }
 
-  const pendingDecisions = Object.values(checkpointsByObjective).flat().filter((c) => c.status === 'PENDING_DECISION').length;
+  // «Richiede te» (badge unico, §5 V2): conteggio autoritativo dal backend,
+  // che include checkpoint PENDING_DECISION + approvazioni budget + approvazioni
+  // runtime. Fallback su checkpoint quando lo status non è ancora disponibile.
+  const pendingDecisions = status?.requiresYouCount
+    ?? Object.values(checkpointsByObjective).flat().filter((c) => c.status === 'PENDING_DECISION').length;
 
   if (loadState === 'error') {
     return (

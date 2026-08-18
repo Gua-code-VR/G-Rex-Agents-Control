@@ -10,37 +10,8 @@ import {
   type GovernanceDashboard,
   type Objective,
   type Project,
-  type ProjectStatus,
 } from '../api/client';
-
-const STATUS_LABEL: Record<ProjectStatus, string> = {
-  FERMO: 'Fermo', IN_AVVIO: 'In avvio', IN_LAVORAZIONE: 'In lavorazione',
-  RICHIEDE_ATTENZIONE: 'Richiede attenzione', BLOCCATO: 'Bloccato',
-  COMPLETATO: 'Completato', ERRORE: 'Errore',
-};
-const GROUP_LABEL: Record<Project['statusGroup'], string> = {
-  FERMO: 'Fermo',
-  IN_LAVORAZIONE: 'In lavorazione',
-  PROBLEMA: 'Con problema',
-};
-const OBJECTIVE_STATUS_LABEL: Record<Objective['status'], string> = {
-  IN_AVVIO: 'In avvio',
-  IN_LAVORAZIONE: 'In lavorazione',
-  RICHIEDE_ATTENZIONE: 'Richiede attenzione',
-  BLOCCATO: 'Bloccato',
-  COMPLETATO: 'Completato',
-  ERRORE: 'Errore',
-  ANNULLATO: 'Annullato',
-};
-const SESSION_STATUS_LABEL: Record<AgentSession['status'], string> = {
-  IN_AVVIO: 'In avvio',
-  ATTIVA: 'Attiva',
-  COMPLETATA: 'Completata',
-  ERRORE: 'Errore',
-  INTERROTTA: 'Interrotta',
-  BLOCCATA: 'Bloccata',
-  STALE: 'Inattiva',
-};
+import { GROUP_LABEL, OBJECTIVE_STATUS_LABEL, PROJECT_STATUS_LABEL as STATUS_LABEL, SESSION_STATUS_LABEL } from '../lib/labels';
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('it-IT');

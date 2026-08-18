@@ -28,6 +28,9 @@ export function classifyError(error: unknown): ErrorClass {
   // AGENT_CONTROL_ERROR: errori di controllo (process-supervisor, sessioni).
   if (
     message.includes('session') ||
+    message.includes('sessionruntime') ||
+    message.includes('shutdown called while') ||
+    message.includes('run is in progress') ||
     message.includes('heartbeat') ||
     message.includes('stale') ||
     message.includes('process reference') ||

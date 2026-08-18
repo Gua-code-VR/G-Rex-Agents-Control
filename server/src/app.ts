@@ -188,6 +188,7 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     runtimeSelector,
     retryWorker,
     workspaces,
+    decisions,
   );
   retryWorker.setExecutor((job) => agentSessions.runRetryJob(job));
 

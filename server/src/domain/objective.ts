@@ -88,6 +88,35 @@ export function objectiveStatusToProjectStatus(status: ObjectiveStatus): Project
   }
 }
 
+/** Priorità degli stati aperti per derivare lo stato del Project (§4.2 V2).
+ *  Lo stato del progetto è DERIVATO dagli obiettivi reali: quando esistono
+ *  più obiettivi aperti prevale la condizione più grave (errore > blocco >
+ *  richiede attenzione > in lavorazione > in avvio); se tutti sono terminali
+ *  il progetto torna FERMO. Serve a evitare stati progetto contraddittori
+ *  rispetto agli obiettivi realmente attivi. */
+const OPEN_STATUS_PRIORITY: Record<ObjectiveStatus, number> = {
+  ERRORE: 6,
+  BLOCCATO: 5,
+  RICHIEDE_ATTENZIONE: 4,
+  IN_LAVORAZIONE: 3,
+  IN_AVVIO: 2,
+  COMPLETATO: 0,
+  ANNULLATO: 0,
+};
+
+export function deriveProjectStatus(objectives: readonly Objective[]): ProjectStatus {
+  let best: ObjectiveStatus | null = null;
+  let bestPriority = 0;
+  for (const objective of objectives) {
+    const priority = OPEN_STATUS_PRIORITY[objective.status];
+    if (priority > bestPriority) {
+      best = objective.status;
+      bestPriority = priority;
+    }
+  }
+  return best ? objectiveStatusToProjectStatus(best) : 'FERMO';
+}
+
 /** Objective (§5): testo, criteri, evidenze Git di inizio/fine lavoro. */
 export interface Objective {
   id: string;

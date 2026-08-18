@@ -1,7 +1,7 @@
 import type { ProviderCatalogService } from './provider-catalog-service.js';
 import type { RuntimeSelectionService } from './runtime-selection-service.js';
 import type { AgentSession, CreateObjectiveInput, Objective } from '../domain/objective.js';
-import { createObjectiveSchema } from '../domain/objective.js';
+import { createObjectiveSchema, deriveProjectStatus } from '../domain/objective.js';
 import type { EventService } from './event-service.js';
 import type { GitStatusService } from './git-status-service.js';
 import type { ProjectService } from './project-service.js';
@@ -91,7 +91,11 @@ export class ObjectiveService {
     const session = this.sessions.createWithHeartbeat(objective.id, selection.runtimeId, this.heartbeatIntervalMs, selection);
 
     this.projects.setCurrentObjective(projectId, objective.id, objective.title);
-    this.projects.setStatus(projectId, { status: 'IN_AVVIO' });
+    // §4.2 V2: lo stato progetto deriva dagli obiettivi reali (un obiettivo
+    // preesistente in errore/blocco non viene nascosto da quello nuovo).
+    this.projects.setStatus(projectId, {
+      status: deriveProjectStatus(this.objectives.listByProject(projectId)),
+    });
 
     this.events.log(EVENT_OBJECTIVE_CREATED, {
       projectId,
@@ -154,8 +158,17 @@ export class ObjectiveService {
     }
 
     const updated = this.objectives.setStatus(id, 'ANNULLATO');
-    this.projects.setCurrentObjective(objective.projectId, null, null);
-    this.projects.setStatus(objective.projectId, { status: 'FERMO' });
+    // La relazione «obiettivo corrente» viene azzerata solo se l'obiettivo
+    // annullato è davvero quello corrente: un altro obiettivo in corso non
+    // deve perdere la propria relazione con il progetto.
+    const project = this.projects.getById(objective.projectId);
+    if (project?.currentObjectiveId === objective.id) {
+      this.projects.setCurrentObjective(objective.projectId, null, null);
+    }
+    // §4.2 V2: stato progetto derivato dagli obiettivi reali rimasti.
+    this.projects.setStatus(objective.projectId, {
+      status: deriveProjectStatus(this.objectives.listByProject(objective.projectId)),
+    });
 
     this.events.log(EVENT_OBJECTIVE_CANCELLED, {
       projectId: objective.projectId,

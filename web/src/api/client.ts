@@ -68,8 +68,11 @@ export interface StatusResponse {
   projectsByStatus: Record<string, number>;
   projectsByGroup: Record<ProjectStatusGroup, number>;
   eventsCount: number;
-  /** M4: checkpoint in attesa di decisione umana. */
+  /** M4: decisioni umane ancora da prendere (checkpoint PENDING_DECISION). */
   pendingDecisions: number;
+  /** §5 V2: numero esatto di azioni umane realmente pendenti (checkpoint +
+   *  approvazioni budget + approvazioni runtime). Fonte unica per i badge. */
+  requiresYouCount: number;
   /** Costo live rilevato oggi (UTC). */
   costToday: number;
   storage: {

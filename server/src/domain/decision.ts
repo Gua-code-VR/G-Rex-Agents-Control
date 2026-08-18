@@ -34,28 +34,20 @@ export interface HumanDecision {
 // ---------------------------------------------------------------------------
 
 import type { ObjectiveStatus } from './objective.js';
-import type { ProjectStatus } from './project.js';
 
 /**
  * Effetto di una decisione sullo stato dell'obiettivo.
  * M5-INV3: stessa decisione → stessa transizione, sempre.
  * La transizione da "non terminale" a terminale è irreversibile (D4-A).
+ *
+ * Nota (§4.2 V2): lo stato del Project NON è un effetto della decisione; è
+ * sempre derivato dagli obiettivi reali (deriveProjectStatus), quindi qui
+ * non esiste più una mappa PROJECT_EFFECTS.
  */
 export const OBJECTIVE_EFFECTS: Record<DecisionType, ObjectiveStatus> = {
   APPROVE: 'COMPLETATO',
   REQUEST_CHANGES: 'RICHIEDE_ATTENZIONE',
   STOP: 'RICHIEDE_ATTENZIONE',
   CANCEL: 'ANNULLATO',
-  RETRY: 'IN_AVVIO',
-};
-
-/**
- * Effetto di una decisione sullo stato del progetto.
- */
-export const PROJECT_EFFECTS: Record<DecisionType, ProjectStatus> = {
-  APPROVE: 'FERMO',
-  REQUEST_CHANGES: 'RICHIEDE_ATTENZIONE',
-  STOP: 'RICHIEDE_ATTENZIONE',
-  CANCEL: 'FERMO',
   RETRY: 'IN_AVVIO',
 };

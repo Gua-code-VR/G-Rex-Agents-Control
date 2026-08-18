@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import type { ExecutionEvent, ExecutionProviderRegistry, ExecutionResult } from '../integrations/execution-provider.js';
 import type { AgentSession, ExecutionSelection, Objective } from '../domain/objective.js';
-import { blockSessionSchema, objectiveStatusToProjectStatus, stopSessionSchema } from '../domain/objective.js';
+import { blockSessionSchema, deriveProjectStatus, stopSessionSchema } from '../domain/objective.js';
 import { checkpointAgentSchema, type Checkpoint } from '../domain/checkpoint.js';
 import type { EventService } from './event-service.js';
 import type { GitStatusService } from './git-status-service.js';
 import type { ProjectService } from './project-service.js';
+import type { DecisionService } from './decision-service.js';
 import type {
   ObjectiveRepository,
   SessionRepository,
@@ -85,8 +86,8 @@ export interface RuntimeApproval {
  * blocco con richiesta di aiuto e gestione errori. Ogni esito diverso
  * dall'avvio genera un Checkpoint M4 (§12-M4): conclusione, richiesta di
  * intervento, blocco o errore diventano un record persistente che
- * richiede una decisione umana. Lo stato ufficiale del progetto segue
- * l'obiettivo tramite objectiveStatusToProjectStatus (§5).
+ * richiede una decisione umana. Lo stato ufficiale del progetto è
+ * derivato dagli obiettivi reali (§4.2 V2).
  */
 export class AgentSessionService {
   constructor(
@@ -104,9 +105,22 @@ export class AgentSessionService {
     private readonly runtimeSelector?: RuntimeSelectionService,
     private readonly retryWorker?: PersistentRetryWorker,
     private readonly worktrees?: WorktreeService,
+    private readonly decisions?: DecisionService,
   ) {}
 
   private readonly runtimeApprovals = new Map<string, RuntimeApproval>();
+
+  /** Numero di approvazioni runtime realmente pendenti (§5 V2). */
+  countRuntimeApprovals(): number {
+    return this.runtimeApprovals.size;
+  }
+
+  /** Rimuove le approvazioni runtime pendenti di una sessione conclusa. */
+  private clearRuntimeApprovals(sessionId: string): void {
+    for (const [requestId, approval] of this.runtimeApprovals) {
+      if (approval.sessionId === sessionId) this.runtimeApprovals.delete(requestId);
+    }
+  }
 
   /** Registra una richiesta di approvazione runtime inoltrata dal provider. */
   private registerRuntimeApproval(objectiveId: string, sessionId: string, processReference: string | null, event: ExecutionEvent): void {
@@ -276,7 +290,15 @@ export class AgentSessionService {
     }
 
     this.objectives.markActive(objectiveId, 'IN_LAVORAZIONE', new Date().toISOString());
-    this.projects.setStatus(objective.projectId, { status: 'IN_LAVORAZIONE' });
+    // §4.2 V2: stato progetto derivato dagli obiettivi reali.
+    this.projects.setStatus(objective.projectId, {
+      status: deriveProjectStatus(this.objectives.listByProject(objective.projectId)),
+    });
+
+    // §5.1 V2: una nuova esecuzione rende obsoleti i checkpoint pendenti del
+    // tentativo precedente (retry/recovery non restano azioni umane pendenti).
+    // La risoluzione è automatica e auditabile e non tocca lo stato corrente.
+    this.decisions?.resolveStalePending(objectiveId, 'Sessione avviata: il nuovo tentativo sostituisce la decisione sul tentativo precedente');
 
     this.events.log(EVENT_SESSION_STARTED, {
       projectId: objective.projectId,
@@ -361,12 +383,17 @@ export class AgentSessionService {
       throw new SessionStateError('La sessione non è attiva');
     }
     this.retryWorker?.cancelSession(sessionId, "Sessione fermata dall'operatore");
+    this.clearRuntimeApprovals(sessionId);
 
+    // La sessione viene terminata PRIMA delle operazioni asincrone (stop del
+    // processo, snapshot Git): un eventuale esito del runtime in arrivo vede la
+    // sessione non più ATTIVA e non può generare transizioni duplicate o stati
+    // contraddittori (es. doppio checkpoint per lo stesso stop).
+    const terminated = this.sessions.terminate(sessionId, 'INTERROTTA', parsed.reason ?? null);
     await this.providers.require(session.agentType).stop(session.processReference ?? sessionId, parsed.reason ?? undefined);
     // Evidenza di fine lavoro (§6-SYSTEM): snapshot Git al momento dello stop.
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
 
-    const terminated = this.sessions.terminate(sessionId, 'INTERROTTA', parsed.reason ?? null);
     await this.supervisor.finalizeLatestAttempt(sessionId, {
       endedAt: new Date().toISOString(),
       status: 'CANCELLED',
@@ -375,7 +402,10 @@ export class AgentSessionService {
     });
     this.objectives.setStatus(objectiveId, 'RICHIEDE_ATTENZIONE');
     if (gitEnd) this.objectives.setGitEnd(objectiveId, gitEnd);
-    this.projects.setStatus(objective.projectId, { status: 'RICHIEDE_ATTENZIONE' });
+    // §4.2 V2: stato progetto derivato dagli obiettivi reali.
+    this.projects.setStatus(objective.projectId, {
+      status: deriveProjectStatus(this.objectives.listByProject(objective.projectId)),
+    });
 
     // M4: lo stop è una richiesta di intervento → checkpoint PENDING_DECISION.
     const checkpoint = this.checkpoints.create({
@@ -418,12 +448,16 @@ export class AgentSessionService {
     const session = this.currentSession(objectiveId);
     if (!session) throw new SessionStateError('Nessuna sessione attiva da completare');
     this.retryWorker?.cancelSession(session.id, 'Sessione completata');
+    this.clearRuntimeApprovals(session.id);
+
+    // Terminazione prima delle operazioni asincrone: un esito del runtime in
+    // arrivo vede la sessione non più ATTIVA (niente doppio completamento).
+    this.sessions.terminate(session.id, 'COMPLETATA', null);
     await this.stopProcess(session);
 
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
     const report = parsed.report ?? 'Obiettivo completato';
 
-    this.sessions.terminate(session.id, 'COMPLETATA', null);
     await this.supervisor.finalizeLatestAttempt(session.id, {
       endedAt: new Date().toISOString(),
       status: 'COMPLETED',
@@ -436,13 +470,10 @@ export class AgentSessionService {
     // Completamento riuscito: stato terminale automatico, senza approvazione
     // umana ordinaria (§ prodotto). Il report finale è mostrato sull'obiettivo.
     this.objectives.completeWithReport(objectiveId, report, gitEnd);
-    // Deriva lo stato progetto dagli obiettivi reali: il progetto torna FERMO
-    // quando l'obiettivo si chiude senza altri obiettivi ancora aperti (non
-    // terminali) — è un contenitore permanente pronto per il prossimo ciclo.
-    const siblings = this.objectives.listByProject(objective.projectId);
-    const openSibling = siblings.find((o) => o.id !== objectiveId && o.status !== 'COMPLETATO' && o.status !== 'ANNULLATO');
+    // §4.2 V2: lo stato progetto è derivato dagli obiettivi reali (se esistono
+    // altri obiettivi non terminali il progetto li riflette, altrimenti FERMO).
     this.projects.setStatus(objective.projectId, {
-      status: openSibling ? objectiveStatusToProjectStatus(openSibling.status) : 'FERMO',
+      status: deriveProjectStatus(this.objectives.listByProject(objective.projectId)),
     });
 
     this.events.log(EVENT_SESSION_COMPLETED, {
@@ -476,12 +507,15 @@ export class AgentSessionService {
     const session = this.currentSession(objectiveId);
     if (!session) throw new SessionStateError('Nessuna sessione attiva da bloccare');
     this.retryWorker?.cancelSession(session.id, 'Sessione bloccata');
-    await this.stopProcess(session);
+    this.clearRuntimeApprovals(session.id);
 
     const reason = parsed.reason ?? "Bloccato dall'operatore";
+    // Terminazione prima delle operazioni asincrone (stesso invariante dello stop).
+    const terminated = this.sessions.terminate(session.id, 'BLOCCATA', reason);
+    await this.stopProcess(session);
+
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
 
-    const terminated = this.sessions.terminate(session.id, 'BLOCCATA', reason);
     await this.supervisor.finalizeLatestAttempt(session.id, {
       endedAt: new Date().toISOString(),
       status: 'CANCELLED',
@@ -490,7 +524,10 @@ export class AgentSessionService {
     });
     this.objectives.setStatus(objectiveId, 'BLOCCATO');
     if (gitEnd) this.objectives.setGitEnd(objectiveId, gitEnd);
-    this.projects.setStatus(objective.projectId, { status: 'BLOCCATO' });
+    // §4.2 V2: stato progetto derivato dagli obiettivi reali.
+    this.projects.setStatus(objective.projectId, {
+      status: deriveProjectStatus(this.objectives.listByProject(objective.projectId)),
+    });
 
     const checkpoint = this.checkpoints.create({
       outcome: 'BLOCKED',
@@ -526,14 +563,17 @@ export class AgentSessionService {
     const session = this.currentSession(objectiveId);
     if (!session) throw new SessionStateError('Nessuna sessione attiva da segnalare in errore');
     this.retryWorker?.cancelSession(session.id, 'Sessione terminata in errore');
-    await this.stopProcess(session);
+    this.clearRuntimeApprovals(session.id);
 
     const detail = parsed.error ?? "Errore segnalato dall'operatore";
     const errorClass = classifyError(detail);
     const translation = translateTechnicalError(detail, errorClass, session.agentType);
+    // Terminazione prima delle operazioni asincrone (stesso invariante dello stop).
+    const terminated = this.sessions.terminate(session.id, 'ERRORE', detail);
+    await this.stopProcess(session);
+
     const gitEnd = await this.gitStatus.readSnapshot(objective.projectId);
 
-    const terminated = this.sessions.terminate(session.id, 'ERRORE', detail);
     await this.supervisor.finalizeLatestAttempt(session.id, {
       endedAt: new Date().toISOString(),
       status: 'FAILED',
@@ -545,7 +585,10 @@ export class AgentSessionService {
     });
     this.objectives.setStatus(objectiveId, 'ERRORE');
     if (gitEnd) this.objectives.setGitEnd(objectiveId, gitEnd);
-    this.projects.setStatus(objective.projectId, { status: 'ERRORE' });
+    // §4.2 V2: stato progetto derivato dagli obiettivi reali.
+    this.projects.setStatus(objective.projectId, {
+      status: deriveProjectStatus(this.objectives.listByProject(objective.projectId)),
+    });
 
     // M4: un errore resta un checkpoint PENDING_DECISION (decisione umana).
     const checkpoint = this.checkpoints.create({
@@ -631,6 +674,7 @@ export class AgentSessionService {
   private async applyRuntimeResult(objectiveId: string, sessionId: string, result: ExecutionResult): Promise<void> {
     const session = this.sessions.getById(sessionId);
     if (!session || session.status !== 'ATTIVA') return; // a human transition already won the race
+    this.clearRuntimeApprovals(sessionId);
     if (result.outcome === 'COMPLETED') {
       const pending = this.effectiveCost(session, result.usage) ?? 0;
       const governance = this.governance?.evaluateAdditionalCost(objectiveId, pending);
@@ -777,7 +821,10 @@ export class AgentSessionService {
     if (!selection) throw new SessionStateError('Catalogo runtime non disponibile');
 
     this.objectives.setStatus(objectiveId, 'IN_AVVIO');
-    this.projects.setStatus(objective.projectId, { status: 'IN_AVVIO' });
+    // §4.2 V2: stato progetto derivato dagli obiettivi reali.
+    this.projects.setStatus(objective.projectId, {
+      status: deriveProjectStatus(this.objectives.listByProject(objective.projectId)),
+    });
     const session = this.sessions.createWithHeartbeat(objectiveId, selection.runtimeId, heartbeatIntervalMs, selection);
     return this.start(objectiveId, session.id);
   }

@@ -80,7 +80,7 @@ export function SystemView({
           <li><span className="health-label">In coda</span><span className="health-value">{queuedSessions}</span></li>
           <li><span className="health-label">Bloccate/inattive</span><span className="health-value">{staleSessions}</span></li>
           <li><span className="health-label">Progetti</span><span className="health-value">{projectsCount}</span></li>
-          <li><span className="health-label">Decisioni pendenti</span><span className="health-value">{status?.pendingDecisions ?? 0}</span></li>
+          <li><span className="health-label">Decisioni pendenti</span><span className="health-value">{status?.requiresYouCount ?? status?.pendingDecisions ?? 0}</span></li>
         </ul>
       </section>
 

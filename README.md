@@ -48,17 +48,24 @@ verità [`docs/G-Rex-Agent-Control-Progettazione-V1.md`](docs/G-Rex-Agent-Contro
   sistema e dichiarazioni dell'agente.
 - Contatore `pendingDecisions` in `/api/status` e API REST per elencare
   e visualizzare checkpoint.
+- `requiresYouCount` in `/api/status`: fonte unica del badge «Richiede te»
+  (checkpoint `PENDING_DECISION` + approvazioni budget + approvazioni
+  runtime; esclude notifiche non lette e sessioni `STALE`).
 - Dashboard con storico checkpoint e stato decisionale.
 
 ## Cosa offre M5
 
 - **Decisioni umane** su checkpoint `POST /api/checkpoints/:id/decide`.
 - `HumanDecision` persistente e append-only per ogni checkpoint deciso.
-- Effetti deterministici su `Objective` e `Project`:
-  - `APPROVE` → obiettivo `COMPLETATO`, progetto `COMPLETATO`
-  - `REQUEST_CHANGES` → obiettivo/progetto `RICHIEDE_ATTENZIONE`
+- Effetti deterministici su `Objective` (il `Project` è **derivato** dagli
+  obiettivi reali, §4.2 V2):
+  - `APPROVE` → obiettivo `COMPLETATO`
+  - `REQUEST_CHANGES` → obiettivo `RICHIEDE_ATTENZIONE`
   - `STOP` → obiettivo `RICHIEDE_ATTENZIONE`
-  - `CANCEL` → obiettivo `ANNULLATO`, progetto `FERMO`
+  - `CANCEL` → obiettivo `ANNULLATO`
+  - `RETRY` → obiettivo `IN_AVVIO`
+- Una decisione su un checkpoint obsoleto (obiettivo con esecuzione ancora
+  attiva) viene rifiutata: non interrompe mai un run in corso.
 - UI del client per decidere direttamente dai checkpoint pendenti.
 
 ## Cosa offre M6

@@ -109,6 +109,12 @@ export class GovernanceService {
   }
 
   portfolio(): unknown { return (this.db.prepare('SELECT id, name FROM projects ORDER BY name').all() as Array<{ id: string; name: string }>).map((project) => ({ project, governance: this.dashboard(project.id) })); }
+
+  /** Approvazioni budget realmente pendenti (§5 V2): alimentano «Richiede te». */
+  countPendingApprovals(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM governance_approvals WHERE status = 'PENDING'").get() as { n: number } | undefined;
+    return Number(row?.n ?? 0);
+  }
   private projectSpend(objectiveId: string): number { const row = this.db.prepare('SELECT o.project_id projectId FROM objectives o WHERE o.id=?').get(objectiveId) as { projectId: string } | undefined; if (!row) return 0; const totals = this.aggregate('o.project_id = ?', row.projectId); return totals.costActual || totals.costEstimate; }
 
   private aggregate(where: string, id: string): Totals { return (this.db.prepare(`SELECT COALESCE(SUM(e.input_tokens),0) inputTokens, COALESCE(SUM(e.output_tokens),0) outputTokens, COALESCE(SUM(e.total_tokens),0) totalTokens, COALESCE(SUM(e.cost_estimate),0) costEstimate, COALESCE(SUM(e.cost_actual),0) costActual FROM execution_attempts e JOIN sessions s ON s.id=e.session_id JOIN objectives o ON o.id=s.objective_id WHERE ${where}`).get(id) as Totals | undefined) ?? emptyTotals(); }

@@ -6,6 +6,7 @@ import type { CheckpointService } from './checkpoint-service.js';
 import type { ProcessSupervisor } from './process-supervisor.js';
 import type { PersistentRetryWorker } from './persistent-retry-worker.js';
 import type { ExecutionProviderRegistry } from '../integrations/execution-provider.js';
+import { deriveProjectStatus } from '../domain/objective.js';
 
 export interface StaleDetectorConfig {
   checkIntervalMs: number;
@@ -91,7 +92,10 @@ export class StaleSessionDetector {
         const updated = this.sessions.terminate(session.id, 'STALE', 'Heartbeat scaduto');
         if (!updated) continue;
         this.objectives.setStatus(objective.id, 'ERRORE');
-        this.projects.setStatus(objective.projectId, { status: 'ERRORE' });
+        // §4.2 V2: stato progetto derivato dagli obiettivi reali.
+        this.projects.setStatus(objective.projectId, {
+          status: deriveProjectStatus(this.objectives.listByProject(objective.projectId)),
+        });
         const checkpoint = this.checkpoints.create({
           outcome: 'ERROR',
           projectId: objective.projectId,
@@ -195,7 +199,10 @@ export class StartupRecoveryService {
       const updated = this.sessions.terminate(session.id, status, reason);
       if (!updated) continue;
       this.objectives.setStatus(objective.id, 'ERRORE');
-      this.projects.setStatus(objective.projectId, { status: 'ERRORE' });
+      // §4.2 V2: stato progetto derivato dagli obiettivi reali.
+      this.projects.setStatus(objective.projectId, {
+        status: deriveProjectStatus(this.objectives.listByProject(objective.projectId)),
+      });
       staleSessions += 1;
       const checkpoint = this.checkpoints.create({
         outcome: 'ERROR',
