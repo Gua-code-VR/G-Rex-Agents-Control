@@ -223,12 +223,15 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     credentials: true,
   });
 
-  // M7: route di autenticazione (prima delle route protette)
-  registerAuthRoutes(app, auth);
-
-  // M7: middleware di autenticazione su tutte le route /api/* (tranne /api/auth/*)
+  // M7: middleware di autenticazione su tutte le route /api/* (tranne /api/auth/*).
+  // Registrato prima di registerAuthRoutes per coprire anche auth e health.
   app.addHook('onRequest', async (req, reply) => {
     const url = req.url.split('?')[0];
+    // Le risposte API non devono mai essere servite dalla cache del browser o di
+    // un proxy: la verità dei dati appartiene ad Agent Control, non alla cache (§14).
+    if (url.startsWith('/api/')) {
+      reply.header('Cache-Control', 'no-store');
+    }
     // Le route auth sono sempre accessibili
     if (url.startsWith('/api/auth/')) return;
     // Health check sempre accessibile
@@ -240,6 +243,9 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
       return reply.code(401).send({ message: 'Autenticazione richiesta.' });
     }
   });
+
+  // M7: route di autenticazione (prima delle route protette)
+  registerAuthRoutes(app, auth);
 
   registerRoutes(app, {
     projects,
