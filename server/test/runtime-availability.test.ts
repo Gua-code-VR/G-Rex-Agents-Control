@@ -96,6 +96,75 @@ describe('CLI runtime availability', () => {
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'approval', approval: expect.objectContaining({ action: 'tool', detail: 'May I run rm -rf /tmp/x?' }) }));
   });
 
+  it('treats a failed session hook as diagnostics, not as a failed run, when run_result is COMPLETED', async () => {
+    spawnSync.mockClear();
+    spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'powershell.exe' && args.includes('-Command')) {
+        return { status: 0, stdout: 'Application\tC:\\tools\\cline.exe\n' };
+      }
+      return { status: 0, stdout: 'version\n' };
+    });
+    const stdout = new (await import('node:events')).EventEmitter() as any;
+    const child = {
+      pid: 6,
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { setEncoding: vi.fn(), on: (ev: string, cb: Function) => { if (ev === 'data') stdout.on('data', cb as (...args: unknown[]) => void); } },
+      stderr: { setEncoding: vi.fn(), on: vi.fn() },
+      once: (ev: string, cb: Function) => { if (ev === 'exit') setTimeout(() => cb(1, null), 10); },
+      killed: false,
+      exitCode: null,
+    };
+    spawn.mockReturnValue(child);
+
+    const handle = await new ClineProvider('cline-hook-diagnostic').start({
+      objectiveId: 'o-hook', projectPath: null, objectiveText: 'do work', stopCondition: null,
+    });
+
+    // Il run termina strutturalmente COMPLETED; l'unica riga "di errore" è la
+    // diagnostica di un hook di sessione fallito. L'esito dell'attempt deve
+    // derivare dall'evento terminale reale, non dalla presenza di stderr.
+    stdout.emit('data', JSON.stringify({ type: 'run_result', finishReason: 'completed', text: 'Lavoro completato.', durationMs: 500, iterations: 1 }) + '\n');
+
+    const result = await handle.completion;
+    expect(result.outcome).toBe('COMPLETED');
+    expect(result.report).toBe('Lavoro completato.');
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('keeps a run FAILED when structured events report a real error (Unauthorized)', async () => {
+    spawnSync.mockClear();
+    spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'powershell.exe' && args.includes('-Command')) {
+        return { status: 0, stdout: 'Application\tC:\\tools\\cline.exe\n' };
+      }
+      return { status: 0, stdout: 'version\n' };
+    });
+    const stdout = new (await import('node:events')).EventEmitter() as any;
+    const child = {
+      pid: 8,
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { setEncoding: vi.fn(), on: (ev: string, cb: Function) => { if (ev === 'data') stdout.on('data', cb as (...args: unknown[]) => void); } },
+      stderr: { setEncoding: vi.fn(), on: vi.fn() },
+      once: (ev: string, cb: Function) => { if (ev === 'exit') setTimeout(() => cb(1, null), 10); },
+      killed: false,
+      exitCode: null,
+    };
+    spawn.mockReturnValue(child);
+
+    const handle = await new ClineProvider('cline-unauthorized').start({
+      objectiveId: 'o-unauth', projectPath: null, objectiveText: 'do work', stopCondition: null,
+    });
+
+    // Errore reale del run riportato dall'evento `done` (reason:"error"): il
+    // messaggio estratto deve essere il testo significativo, non il fallback.
+    stdout.emit('data', JSON.stringify({ type: 'agent_event', event: { type: 'done', reason: 'error', text: 'Unauthorized: Please verify your API key and permissions.' } }) + '\n');
+
+    const result = await handle.completion;
+    expect(result.outcome).toBe('FAILED');
+    expect(result.reason).toContain('Unauthorized');
+    expect(result.errorClass).toBe('CONNECTIVITY_ERROR');
+  });
+
   it('emits heartbeat while a silent Cline process is still alive', async () => {
     vi.useFakeTimers();
     spawnSync.mockImplementation((command: string, args: string[]) => {

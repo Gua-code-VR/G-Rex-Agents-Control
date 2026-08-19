@@ -213,16 +213,30 @@ abstract class LocalCliProvider implements ExecutionProvider {
         this.processes.delete(processReference);
         const cancelled = signal !== null;
         const raw = output.join('');
+        // L'esito terminale strutturato (run_result/done) è la fonte autorevole
+        // dell'esito del run: un exit code non-zero può essere prodotto da
+        // diagnostica indipendente (es. fallimento di un hook di sessione) senza
+        // che il run sia fallito. Gli eventi strutturati distinguono inoltre un
+        // errore reale (es. Unauthorized) da un semplice warning su stderr.
+        const structured = structuredTerminalOutcome(raw);
+        const outcome: ExecutionOutcome = cancelled ? 'CANCELLED' : structured ?? (code === 0 ? 'COMPLETED' : 'FAILED');
+        const errorMessage = extractErrorMessage(raw);
         resolve({
-          outcome: cancelled ? 'CANCELLED' : code === 0 ? 'COMPLETED' : 'FAILED',
+          outcome,
           exitCode: code,
-          reason: cancelled ? `Processo terminato (${signal})` : code === 0 ? null : extractErrorMessage(raw) || `Exit code ${code}`,
-          report: code === 0 ? extractFinalReport(raw) : null,
-          errorClass: code === 0 ? null : /econn|timeout|network|unauthorized|authenticat|re-authenticate|api ?key|credential|401/i.test(raw)
-            ? 'CONNECTIVITY_ERROR'
-            : /sessionruntime|shutdown called while a run is in progress/i.test(raw)
-              ? 'AGENT_CONTROL_ERROR'
-              : 'AGENT_ERROR',
+          reason: cancelled
+            ? `Processo terminato (${signal})`
+            : outcome === 'FAILED'
+              ? errorMessage || (structured === 'FAILED' ? 'Il runtime ha riportato un errore del run' : null) || `Exit code ${code}`
+              : null,
+          report: outcome === 'COMPLETED' ? extractFinalReport(raw) : null,
+          errorClass: outcome === 'FAILED'
+            ? /econn|timeout|network|unauthorized|authenticat|re-authenticate|api ?key|credential|401/i.test(raw)
+              ? 'CONNECTIVITY_ERROR'
+              : /sessionruntime|shutdown called while a run is in progress/i.test(raw)
+                ? 'AGENT_CONTROL_ERROR'
+                : 'AGENT_ERROR'
+            : null,
           metadata: { signal, output: raw.slice(-4000) },
           usage: accumulateUsage(raw),
         });
@@ -392,6 +406,37 @@ function extractFinalReport(output: string): string | null {
   return report;
 }
 
+/**
+ * Esito terminale strutturato del runtime (Cline/Codex) ricavato dagli eventi
+ * NDJSON (`run_result`/`done`). Questi eventi sono la fonte autorevole del
+ * risultato di un run: un exit code non-zero può derivare da diagnostica
+ * indipendente (es. il fallimento di un hook di sessione) senza che il run sia
+ * fallito. Restituisce null quando nessun evento terminale è presente, lasciando
+ * al chiamante il fallback sull'exit code.
+ */
+function structuredTerminalOutcome(output: string): 'COMPLETED' | 'FAILED' | null {
+  let terminal: 'COMPLETED' | 'FAILED' | null = null;
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let value: Record<string, any>;
+    try { value = JSON.parse(trimmed); } catch { continue; }
+    const runResult = value.run_result as Record<string, any> | undefined;
+    const event = value.event as Record<string, any> | undefined;
+    // `run_result` di Cline espone finishReason in cima all'oggetto event;
+    // `done`/Codex lo espongono come reason (event.reason o value.reason).
+    const finishReason: unknown = runResult?.finishReason ?? event?.reason ?? value.finishReason ?? value.reason;
+    if (finishReason === 'completed' || finishReason === 'max_iterations') {
+      terminal = terminal ?? 'COMPLETED';
+    } else if (finishReason === 'error' || finishReason === 'failed') {
+      terminal = 'FAILED';
+    }
+    // `run_result` è l'evento finale aggregato: quando è presente è decisivo.
+    if (value.type === 'run_result') break;
+  }
+  return terminal;
+}
+
 /** Estrae un messaggio d'errore leggibile dall'output NDJSON del runtime,
  *  evitando di propagare al Control Plane l'intero flusso grezzo. */
 function extractErrorMessage(output: string): string {
@@ -407,6 +452,14 @@ function extractErrorMessage(output: string): string {
         if (text) return truncate(text, 600);
       }
       const event = value.event as Record<string, any> | undefined;
+      // Cline emette l'errore reale anche come `done` con reason:"error" e il
+      // testo significativo nel campo `text` (es. Unauthorized).
+      if (event?.type === 'done' && event.reason === 'error') {
+        const message = typeof event.text === 'string' && event.text.trim()
+          ? event.text
+          : typeof event.error?.message === 'string' ? event.error.message : '';
+        if (message.trim()) return truncate(message.trim(), 600);
+      }
       if (event?.type === 'error') {
         const message = typeof event.error?.message === 'string' ? event.error.message
           : typeof event.message === 'string' ? event.message
