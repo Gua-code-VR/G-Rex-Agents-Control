@@ -70,7 +70,7 @@ export interface BuiltApp {
 /** Fallback retro-compatibile (M18/M20): Cline è sempre esposto nel catalogo,
  *  anche senza GAC_CLINE_MODEL (modelli vuoti → la CLI usa il suo default).
  *  Questo evita «Runtime non supportato: cline» nella selezione manuale. */
-function fallbackClineProviders(config: AppConfig): PricingProviderEntry[] {
+function legacyFallbackClineProviders(config: AppConfig): PricingProviderEntry[] {
   return [{
     id: config.clineProvider,
     name: config.clineProvider,
@@ -85,6 +85,49 @@ function fallbackClineProviders(config: AppConfig): PricingProviderEntry[] {
         }]
       : [],
   }];
+}
+
+function fallbackClineProviders(config: AppConfig): PricingProviderEntry[] {
+  const byProvider = new Map<string, PricingProviderEntry>();
+  const ensure = (id: string, name: string): PricingProviderEntry => {
+    const existing = byProvider.get(id);
+    if (existing) return existing;
+    const created: PricingProviderEntry = { id, name, models: [] };
+    byProvider.set(id, created);
+    return created;
+  };
+  const appendModel = (
+    provider: PricingProviderEntry,
+    model: { id: string; name: string; contextTokens: number | null; defaultOutputTokens: number },
+    pricing: { inputPerMillion: number | null; outputPerMillion: number | null },
+  ): void => {
+    if (provider.models.some((item) => item.id === model.id)) return;
+    provider.models.push({
+      id: model.id,
+      name: model.name,
+      contextTokens: model.contextTokens,
+      defaultOutputTokens: model.defaultOutputTokens,
+      pricing: { ...pricing, currency: 'USD' },
+      pricingSchedule: null,
+    });
+  };
+
+  for (const provider of legacyFallbackClineProviders(config)) {
+    const target = ensure(provider.id, provider.name);
+    for (const model of provider.models) {
+      appendModel(target, model, {
+        inputPerMillion: model.pricing.inputPerMillion,
+        outputPerMillion: model.pricing.outputPerMillion,
+      });
+    }
+  }
+  for (const providerConfig of config.clineConfiguredProviders) {
+    const provider = ensure(providerConfig.id, providerConfig.name);
+    for (const model of providerConfig.models) {
+      appendModel(provider, model, { inputPerMillion: null, outputPerMillion: null });
+    }
+  }
+  return [...byProvider.values()];
 }
 
 /** Seleziona l'adapter agente (§8 e §14): fake per demo/test, Cline in produzione. */

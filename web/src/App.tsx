@@ -26,6 +26,7 @@ import { AiCatalogView } from './components/AiCatalogView';
 import { LoginPage } from './components/LoginPage';
 import type { NavSection } from './components/Sidebar';
 import { SettingsPage } from './components/SettingsPage';
+import { ActivityMonitorView } from './components/ActivityMonitorView';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -222,11 +223,6 @@ export default function App() {
     <AppShell activeSection={activeTab} onNavigate={(section) => setActiveTab(section as NavSection)} pendingDecisions={pendingDecisions} costToday={costToday}>
       {loadState === 'loading' ? (<p className="muted">Caricamento…</p>) : (<>
 
-          {notifications.length > 0 && <section className="card" aria-live="polite">
-            <div className="git-box-head"><h2>Notifiche ({notifications.length})</h2><button type="button" className="btn btn-ghost" onClick={() => void markNotificationsRead()}>Segna lette</button></div>
-            <ul className="event-list">{notifications.slice(0, 5).map((notification) => <li key={notification.id}><time>{formatDate(notification.createdAt)}</time><code>{notification.severity}</code><span><strong>{notification.title}</strong> — {notification.message}</span></li>)}</ul>
-          </section>}
-
           {(actionError) && (
             <div className="error-bar" onClick={() => { setActionError(null); }}>
               ⚠ {actionError}<span className="error-dismiss">✕</span>
@@ -234,6 +230,10 @@ export default function App() {
           )}
           {/* CONTROL ROOM (cockpit operativo — Fase 2, §5) */}
           {activeTab === 'control-room' && (<div className="tab-content control-room-tab">
+            {notifications.length > 0 && <section className="card" aria-live="polite">
+              <div className="git-box-head"><h2>Notifiche ({notifications.length})</h2><button type="button" className="btn btn-ghost" onClick={() => void markNotificationsRead()}>Segna lette</button></div>
+              <ul className="event-list">{notifications.slice(0, 5).map((notification) => <li key={notification.id}><time>{formatDate(notification.createdAt)}</time><code>{notification.severity}</code><span><strong>{notification.title}</strong> — {notification.message}</span></li>)}</ul>
+            </section>}
             <ControlRoom
               projects={projects}
               objectivesByProject={objectivesByProject}
@@ -288,6 +288,10 @@ export default function App() {
               onCancel={handleCancel}
               busy={objectiveBusy}
             />
+          </div>)}
+
+          {activeTab === 'activity-monitor' && (<div className="tab-content activity-monitor-tab">
+            <ActivityMonitorView projects={projects} objectivesByProject={objectivesByProject} sessionsByObjective={sessionsByObjective} />
           </div>)}
 
           {/* REQUIRES YOU (§4: Richiede te — vista dedicata in Fase 6) */}

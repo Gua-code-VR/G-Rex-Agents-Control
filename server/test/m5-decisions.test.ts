@@ -271,8 +271,8 @@ describe('M5 - Decisioni e completamento automatico', () => {
     }
   });
 
-  // AC14: APPROVE su BLOCKED checkpoint
-  it('AC14 - APPROVE su checkpoint BLOCKED chiude obiettivo', async () => {
+  // AC14: APPROVE su BLOCKED checkpoint non certifica successo.
+  it('AC14 - APPROVE su checkpoint BLOCKED non completa l obiettivo', async () => {
     const pid = await newProject('M5 Approve Blocked T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Blocca e approva');
     await startSession(objectiveId, sessionId);
@@ -280,11 +280,12 @@ describe('M5 - Decisioni e completamento automatico', () => {
 
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE' } });
     expect(res.statusCode).toBe(200);
-    expect(res.json().objective.status).toBe('COMPLETATO');
-    expect(res.json().project.status).toBe('FERMO');
+    expect(res.json().checkpoint.status).toBe('DECIDED');
+    expect(res.json().objective.status).toBe('BLOCCATO');
+    expect(res.json().project.status).toBe('BLOCCATO');
   });
 
-  it('AC15 - APPROVE su checkpoint ERROR chiude obiettivo', async () => {
+  it('AC15 - FAILED -> checkpoint ERROR -> APPROVE non completa l obiettivo', async () => {
     const pid = await newProject('M5 Approve Error T');
     const { objectiveId, sessionId } = await newObjective(pid, 'Errore e approva');
     await startSession(objectiveId, sessionId);
@@ -292,8 +293,16 @@ describe('M5 - Decisioni e completamento automatico', () => {
 
     const res = await built.app.inject({ method: 'POST', url: `/api/checkpoints/${cid}/decide`, payload: { decisionType: 'APPROVE' } });
     expect(res.statusCode).toBe(200);
-    expect(res.json().objective.status).toBe('COMPLETATO');
-    expect(res.json().project.status).toBe('FERMO');
+    expect(res.json().checkpoint.status).toBe('DECIDED');
+    expect(res.json().checkpoint.outcome).toBe('ERROR');
+    expect(res.json().objective.status).toBe('ERRORE');
+    expect(res.json().project.status).toBe('ERRORE');
+
+    const attempts = (await built.app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/execution-attempts` })).json().attempts as Array<{ status: string }>;
+    expect(attempts.at(-1)?.status).toBe('FAILED');
+    const detail = (await built.app.inject({ method: 'GET', url: `/api/objectives/${objectiveId}` })).json();
+    expect(detail.objective.status).not.toBe('COMPLETATO');
+    expect(detail.objective.completedAt).toBeNull();
   });
 
   it('AC16 - REQUEST_CHANGES su checkpoint ERROR lascia obiettivo RICHIEDE_ATTENZIONE', async () => {

@@ -25,3 +25,41 @@ describe('M20 - selezione esplicita Cline nel catalogo', () => {
     expect(() => built.services.catalog.resolve({ runtimeId: 'cline' })).not.toThrow(/non supportato/);
   });
 });
+
+describe('M20 - catalogo operativo Cline senza pricing', () => {
+  it('espone DeepSeek Flash come provider/modello operativo Cline anche senza pricing', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gac-m20-deepseek-'));
+    const built = await buildApp(loadConfig({ GAC_DATA_DIR: dataDir, GAC_LOG_LEVEL: 'silent' }));
+    try {
+      const res = await built.app.inject({ method: 'GET', url: '/api/provider-catalog' });
+      const catalog = res.json().catalog as Array<{ runtime: { id: string }; provider: { id: string; name: string }; models: Array<{ id: string; pricing: { inputPerMillion: number | null; outputPerMillion: number | null } }> }>;
+      const deepseek = catalog.find((entry) => entry.runtime.id === 'cline' && entry.provider.id === 'deepseek');
+      expect(deepseek?.provider.name).toBe('DeepSeek');
+      expect(deepseek?.models.map((model) => model.id)).toContain('deepseek-v4-flash');
+      const flash = deepseek?.models.find((model) => model.id === 'deepseek-v4-flash');
+      expect(flash?.pricing).toMatchObject({ inputPerMillion: null, outputPerMillion: null });
+    } finally {
+      await built.app.close();
+      built.services.db.close();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('consente override esplicito dei provider operativi Cline da configurazione Agent Control', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gac-m20-override-'));
+    const built = await buildApp(loadConfig({
+      GAC_DATA_DIR: dataDir,
+      GAC_LOG_LEVEL: 'silent',
+      GAC_CLINE_CONFIGURED_PROVIDERS: JSON.stringify([{ id: 'local-ai', name: 'Local AI', models: ['local-code'] }]),
+    }));
+    try {
+      const catalog = (await built.app.inject({ method: 'GET', url: '/api/provider-catalog' })).json().catalog as Array<{ runtime: { id: string }; provider: { id: string }; models: Array<{ id: string }> }>;
+      expect(catalog.find((entry) => entry.runtime.id === 'cline' && entry.provider.id === 'local-ai')?.models.map((model) => model.id)).toEqual(['local-code']);
+      expect(catalog.some((entry) => entry.runtime.id === 'cline' && entry.provider.id === 'deepseek')).toBe(false);
+    } finally {
+      await built.app.close();
+      built.services.db.close();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});

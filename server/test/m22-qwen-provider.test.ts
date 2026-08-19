@@ -95,8 +95,12 @@ describe('M22 - Qwen provider diretto (openai-compatible)', () => {
     const deepseek = buildClineArgs({ objectiveText: 'fix', stopCondition: null, providerId: 'deepseek', model: 'deepseek-v4-pro' });
     expect(deepseek.slice(0, 5)).toEqual(['--json', '--provider', 'deepseek', '--model', 'deepseek-v4-pro']);
 
-    // Senza provider noto non si passa --provider (il router lo garantisce sempre valorizzato).
-    expect(buildClineArgs({ objectiveText: 'fix', stopCondition: null })).toEqual(['--json', 'fix']);
+    // Anche il fallback runtime-managed resta esplicito: non può leggere
+    // lastUsedProvider dalla configurazione globale di Cline.
+    expect(buildClineArgs({ objectiveText: 'fix', stopCondition: null, providerId: 'cline' }))
+      .toEqual(['--json', '--provider', 'cline', 'fix']);
+    expect(() => buildClineArgs({ objectiveText: 'fix', stopCondition: null, providerId: '  ' }))
+      .toThrow('Cline richiede un provider selezionato esplicitamente');
   });
 
   it('espone Qwen nel catalogo provider/modello (dal pricing locale)', () => {

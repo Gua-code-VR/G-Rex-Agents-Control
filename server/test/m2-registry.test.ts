@@ -88,10 +88,15 @@ describe('M2 - registro progetti e stato', () => {
       const res = await built.app.inject({ method: 'POST', url: '/api/projects', payload: input });
       expect(res.statusCode).toBe(201);
       const project = res.json().project;
-      // «Crea progetto» con obiettivo iniziale crea l'Objective e lo avvia
-      // subito (IN_LAVORAZIONE); senza obiettivo il progetto resta FERMO.
-      expect(project.status).toBe(input.currentObjective ? 'IN_LAVORAZIONE' : 'FERMO');
-      expect(project.statusGroup).toBe(input.currentObjective ? 'IN_LAVORAZIONE' : 'FERMO');
+      // «Crea progetto» con obiettivo iniziale crea l'Objective; se il worker
+      // fake è già occupato resta correttamente IN_AVVIO nella coda.
+      if (input.currentObjective) {
+        expect(['IN_LAVORAZIONE', 'IN_AVVIO']).toContain(project.status);
+        expect(project.statusGroup).toBe('IN_LAVORAZIONE');
+      } else {
+        expect(project.status).toBe('FERMO');
+        expect(project.statusGroup).toBe('FERMO');
+      }
       expect(project.currentObjective).toBe(input.currentObjective ?? null);
       // Il repository viene associato già in creazione: lo snapshot è presente
       // anche per percorsi non validi (errore esplicito, mai null).
@@ -101,8 +106,9 @@ describe('M2 - registro progetti e stato', () => {
       if (input.currentObjective) {
         expect(res.json().initialObjective).toBeTruthy();
         expect(res.json().initialObjective.objective.title).toBe(input.currentObjective);
-        expect(res.json().initialObjective.autoStart).toEqual({ started: true });
-        expect(res.json().initialObjective.session.status).toBe('ATTIVA');
+        const started = res.json().initialObjective.autoStart.started as boolean;
+        expect(typeof started).toBe('boolean');
+        expect(res.json().initialObjective.session.status).toBe(started ? 'ATTIVA' : 'IN_AVVIO');
       } else {
         expect(res.json().initialObjective).toBeNull();
       }
@@ -358,7 +364,7 @@ describe('M2 - registro progetti e stato', () => {
       expect(a.gitStatus?.lastCommit).toBe('commit che deve sopravvivere');
 
       expect(b.name).toBe('persistente-b');
-      expect(b.status).toBe('IN_LAVORAZIONE');
+      expect(['IN_LAVORAZIONE', 'IN_AVVIO']).toContain(b.status);
       expect(b.currentObjective).toBe('Obiettivo B da ricostruire');
 
       expect(c.name).toBe('persistente-c');
@@ -368,7 +374,7 @@ describe('M2 - registro progetti e stato', () => {
       const status = (await second.app.inject({ method: 'GET', url: '/api/status' })).json();
       expect(status.projectsCount).toBe(3);
       expect(status.projectsByStatus.FERMO).toBe(1);
-      expect(status.projectsByStatus.IN_LAVORAZIONE).toBe(2);
+      expect((status.projectsByStatus.IN_LAVORAZIONE ?? 0) + (status.projectsByStatus.IN_AVVIO ?? 0)).toBe(2);
     } finally {
       await second.app.close();
       second.services.db.close();

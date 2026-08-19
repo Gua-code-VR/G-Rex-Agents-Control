@@ -1,6 +1,19 @@
 import path from 'node:path';
 import process from 'node:process';
 
+export interface ConfiguredClineModel {
+  id: string;
+  name: string;
+  contextTokens: number | null;
+  defaultOutputTokens: number;
+}
+
+export interface ConfiguredClineProvider {
+  id: string;
+  name: string;
+  models: ConfiguredClineModel[];
+}
+
 /**
  * Configurazione applicativa. Tutto è locale: nessun servizio esterno.
  * La porta predefinita è 3000 e l'host predefinito è 127.0.0.1
@@ -20,6 +33,8 @@ export interface AppConfig {
   clineProvider: string;
   /** Modello Cline predefinito, se esplicitato (GAC_CLINE_MODEL). */
   clineModel: string | null;
+  /** Provider/modelli operativi selezionabili per Cline anche senza listino. */
+  clineConfiguredProviders: ConfiguredClineProvider[];
   clineInputPricePerMillion: number | null;
   clineOutputPricePerMillion: number | null;
   /** File JSON dei provider diretti Cline (M18); assente → fallback alle env singole. */
@@ -84,6 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const clineEnabled = env.GAC_CLINE_ENABLED !== 'false';
   const clineProvider = env.GAC_CLINE_PROVIDER?.trim() || 'cline';
   const clineModel = env.GAC_CLINE_MODEL?.trim() || null;
+  const clineConfiguredProviders = parseConfiguredClineProviders(env.GAC_CLINE_CONFIGURED_PROVIDERS);
   const clineInputPricePerMillion = nonNegativeNumber(env.GAC_CLINE_INPUT_PRICE_PER_MILLION);
   const clineOutputPricePerMillion = nonNegativeNumber(env.GAC_CLINE_OUTPUT_PRICE_PER_MILLION);
   // Compatibilità M3: GAC_AGENT_MODE resta un alias del runtime predefinito.
@@ -141,6 +157,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     clineEnabled,
     clineProvider,
     clineModel,
+    clineConfiguredProviders,
     clineInputPricePerMillion,
     clineOutputPricePerMillion,
     defaultRuntime,
@@ -168,6 +185,60 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     workspaceIntegrateOnComplete,
     workspaceBlockOnDirty,
   };
+}
+
+const defaultConfiguredClineProviders: ConfiguredClineProvider[] = [
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    models: [{
+      id: 'deepseek-v4-flash',
+      name: 'DeepSeek V4 Flash',
+      contextTokens: 64_000,
+      defaultOutputTokens: 8_000,
+    }],
+  },
+];
+
+function parseConfiguredClineProviders(raw: string | undefined): ConfiguredClineProvider[] {
+  if (!raw?.trim()) return defaultConfiguredClineProviders;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return defaultConfiguredClineProviders;
+    const providers: ConfiguredClineProvider[] = [];
+    for (const provider of parsed) {
+      if (!provider || typeof provider !== 'object') continue;
+      const record = provider as Record<string, unknown>;
+      const id = typeof record.id === 'string' ? record.id.trim() : '';
+      if (!id) continue;
+      const models = Array.isArray(record.models) ? record.models.flatMap((model) => {
+        if (typeof model === 'string') {
+          const modelId = model.trim();
+          return modelId ? [{ id: modelId, name: modelId, contextTokens: null, defaultOutputTokens: 4000 }] : [];
+        }
+        if (!model || typeof model !== 'object') return [];
+        const modelRecord = model as Record<string, unknown>;
+        const modelId = typeof modelRecord.id === 'string' ? modelRecord.id.trim() : '';
+        if (!modelId) return [];
+        const contextTokens = typeof modelRecord.contextTokens === 'number' && Number.isFinite(modelRecord.contextTokens) && modelRecord.contextTokens > 0 ? Math.trunc(modelRecord.contextTokens) : null;
+        const output = typeof modelRecord.defaultOutputTokens === 'number' && Number.isFinite(modelRecord.defaultOutputTokens) && modelRecord.defaultOutputTokens > 0 ? Math.trunc(modelRecord.defaultOutputTokens) : 4000;
+        return [{
+          id: modelId,
+          name: typeof modelRecord.name === 'string' && modelRecord.name.trim() ? modelRecord.name.trim() : modelId,
+          contextTokens,
+          defaultOutputTokens: output,
+        }];
+      }) : [];
+      providers.push({
+        id,
+        name: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : id,
+        models,
+      });
+    }
+    return providers.length ? providers : defaultConfiguredClineProviders;
+  } catch {
+    return defaultConfiguredClineProviders;
+  }
 }
 
 function positiveMs(value: string | undefined, fallback: number): number {

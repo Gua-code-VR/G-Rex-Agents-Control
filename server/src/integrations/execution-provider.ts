@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
 import type { PricingProviderEntry, PricingWindow } from '../domain/pricing.js';
 
 export interface CliLaunch { command: string; prefixArgs: string[]; }
@@ -11,6 +12,11 @@ export function getCliLaunch(command: string): CliLaunch | null {
   if (cliLaunchCache.has(cacheKey)) return cliLaunchCache.get(cacheKey) ?? null;
   if (process.platform !== 'win32') {
     const launch = { command, prefixArgs: [] };
+    cliLaunchCache.set(cacheKey, launch);
+    return launch;
+  }
+  if (command.toLowerCase().endsWith('.ps1') && fs.existsSync(command)) {
+    const launch = { command: 'powershell.exe', prefixArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', command] };
     cliLaunchCache.set(cacheKey, launch);
     return launch;
   }
@@ -505,14 +511,16 @@ function firstNonEmptyString(...values: unknown[]): string | null {
 export function buildClineArgs(params: {
   objectiveText: string;
   stopCondition: string | null;
-  providerId?: string | null;
+  providerId: string;
   model?: string | null;
 }): string[] {
   const prompt = [params.objectiveText, params.stopCondition ? `Condizione di stop: ${params.stopCondition}` : null]
     .filter(Boolean)
     .join('\n\n');
-  const args = ['--json'];
-  if (params.providerId) args.push('--provider', params.providerId);
+  if (!params.providerId.trim()) {
+    throw new Error('Cline richiede un provider selezionato esplicitamente');
+  }
+  const args = ['--json', '--provider', params.providerId];
   if (params.model) args.push('--model', params.model);
   return [...args, prompt];
 }
@@ -525,7 +533,10 @@ export class ClineProvider extends LocalCliProvider {
     private readonly pricing: () => PricingProviderEntry[] = () => [],
   ) { super(command, enabled); }
   async start(params: StartExecutionParams): Promise<ExecutionHandle> {
-    return this.launch(buildClineArgs(params), params);
+    // Compatibilità per chiamanti legacy: anche senza una selezione completa,
+    // il fallback è esplicito e non legge lastUsedProvider dalla config locale.
+    const providerId = params.providerId?.trim() || 'cline';
+    return this.launch(buildClineArgs({ ...params, providerId }), params);
   }
   catalog(): ProviderCatalogEntry[] {
     return this.pricing().map((entry) => ({

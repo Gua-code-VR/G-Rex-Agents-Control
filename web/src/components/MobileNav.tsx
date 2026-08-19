@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 
 export type MobileTab = 'control-room' | 'projects' | 'executions' | 'requires-you' | 'more';
-export type MoreMenuItem = 'governance' | 'ai-catalog' | 'events-audit' | 'system' | 'settings';
+export type MoreMenuItem = 'governance' | 'ai-catalog' | 'events-audit' | 'activity-monitor' | 'system' | 'settings';
 
 interface MobileNavProps {
   activeTab: MobileTab | MoreMenuItem;
@@ -18,6 +18,7 @@ const MAIN_TABS: Array<{ key: MobileTab; icon: string; label: string }> = [
 ];
 
 const MORE_ITEMS: Array<{ key: MoreMenuItem; icon: string; label: string }> = [
+  { key: 'activity-monitor', icon: '📡', label: 'Monitor attività' },
   { key: 'governance', icon: '📊', label: 'Governance' },
   { key: 'ai-catalog', icon: '🤖', label: 'AI Catalog' },
   { key: 'events-audit', icon: '📜', label: 'Eventi / Audit' },

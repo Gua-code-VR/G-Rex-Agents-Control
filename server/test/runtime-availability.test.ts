@@ -27,8 +27,8 @@ describe('CLI runtime availability', () => {
     const cline = new ClineProvider('cline');
     expect(cline.isConfigured()).toBe(true);
     expect(new CodexProvider().isConfigured()).toBe(true);
-    await cline.start({ objectiveId: 'o1', projectPath: null, objectiveText: 'test', stopCondition: null });
-    expect(spawn).toHaveBeenCalledWith('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'C:\\tools\\cline.ps1', '--json', 'test'], expect.any(Object));
+    await cline.start({ objectiveId: 'o1', projectPath: null, objectiveText: 'test', stopCondition: null, providerId: 'cline' });
+    expect(spawn).toHaveBeenCalledWith('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'C:\\tools\\cline.ps1', '--json', '--provider', 'cline', 'test'], expect.any(Object));
   });
 
   it('keeps explicitly disabled runtimes unavailable', () => {
@@ -84,6 +84,7 @@ describe('CLI runtime availability', () => {
 
     const handle = await provider.start({
       objectiveId: 'o-report', projectPath: null, objectiveText: 'do work', stopCondition: null,
+      providerId: 'cline',
       onEvent,
     });
 
@@ -118,6 +119,7 @@ describe('CLI runtime availability', () => {
 
     const handle = await new ClineProvider('cline-hook-diagnostic').start({
       objectiveId: 'o-hook', projectPath: null, objectiveText: 'do work', stopCondition: null,
+      providerId: 'cline',
     });
 
     // Il run termina strutturalmente COMPLETED; l'unica riga "di errore" è la
@@ -153,6 +155,7 @@ describe('CLI runtime availability', () => {
 
     const handle = await new ClineProvider('cline-unauthorized').start({
       objectiveId: 'o-unauth', projectPath: null, objectiveText: 'do work', stopCondition: null,
+      providerId: 'cline',
     });
 
     // Errore reale del run riportato dall'evento `done` (reason:"error"): il
@@ -190,6 +193,7 @@ describe('CLI runtime availability', () => {
 
     const handle = await new ClineProvider('cline-terminal-reason').start({
       objectiveId: 'o-terminal-reason', projectPath: null, objectiveText: 'do work', stopCondition: null,
+      providerId: 'cline',
     });
     stderr.emit('data', JSON.stringify({ type: 'error', message: 'hook dispatch failed: session.hook requires a valid hook event payload' }) + '\n');
     stdout.emit('data', JSON.stringify({ type: 'agent_event', event: { type: 'done', reason: 'error', text: 'Unauthorized: Please verify your API key and permissions.' } }) + '\n');
@@ -218,6 +222,7 @@ describe('CLI runtime availability', () => {
 
     await new ClineProvider('cline').start({
       objectiveId: 'o-silent', projectPath: null, objectiveText: 'long task', stopCondition: null,
+      providerId: 'cline',
       heartbeatIntervalMs: 1000, onEvent,
     });
     await vi.advanceTimersByTimeAsync(1000);

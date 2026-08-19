@@ -5,6 +5,7 @@ export type NavSection =
   | 'projects' 
   | 'objectives' 
   | 'executions' 
+  | 'activity-monitor'
   | 'requires-you'
   | 'governance' 
   | 'ai-catalog' 
@@ -27,6 +28,10 @@ const PRIMARY_NAV: Array<{ key: NavSection; icon: string; label: string; badge?:
   { key: 'objectives', icon: '🎯', label: 'Obiettivi' },
   { key: 'executions', icon: '⚙️', label: 'Esecuzioni' },
   { key: 'requires-you', icon: '🔔', label: 'Richiede te', badge: 0 }, // badge will be overridden
+];
+
+const ACTIVITY_NAV: Array<{ key: NavSection; icon: string; label: string }> = [
+  { key: 'activity-monitor', icon: '📡', label: 'Monitor attività' },
 ];
 
 const SECONDARY_NAV: Array<{ key: NavSection; icon: string; label: string }> = [
@@ -99,6 +104,7 @@ export function Sidebar({
         <div className="nav-section primary">
           {!collapsed && <h3 className="nav-section-title">PRINCIPALE</h3>}
           {PRIMARY_NAV.map(item => renderNavItem({ ...item, badge: item.key === 'requires-you' ? pendingDecisions : item.badge }))}
+          {ACTIVITY_NAV.map(item => renderNavItem(item))}
         </div>
         
         <div className="nav-section secondary">

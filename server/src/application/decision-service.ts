@@ -137,7 +137,7 @@ export class DecisionService {
 
     const decision = this.decisions.create(checkpointId, decisionType, note);
 
-    const updatedObjective = this.applyObjectiveEffect(objective, checkpoint.sessionId, decisionType);
+    const updatedObjective = this.applyObjectiveEffect(objective, checkpoint, decisionType);
     const updatedProject = this.applyProjectEffect(objective.projectId);
 
     this.events.log(EVENT_DECISION_MADE, {
@@ -157,24 +157,29 @@ export class DecisionService {
     return { checkpoint: updatedCheckpoint, decision, objective: updatedObjective, project: updatedProject };
   }
 
-  private applyObjectiveEffect(objective: Objective, checkpointSessionId: string | null, decisionType: DecisionType): Objective {
+  private applyObjectiveEffect(objective: Objective, checkpoint: Checkpoint, decisionType: DecisionType): Objective {
     const targetStatus: ObjectiveStatus = OBJECTIVE_EFFECTS[decisionType];
 
     switch (decisionType) {
       case 'APPROVE': {
-        this.terminateCheckpointSession(objective.id, checkpointSessionId, 'Obiettivo approvato');
-        return this.objectives.complete(objective.id)!;
+        this.terminateCheckpointSession(objective.id, checkpoint.sessionId, 'Checkpoint approvato');
+        if (checkpoint.outcome === 'COMPLETED' && checkpoint.acceptanceStatus === 'MET') {
+          return this.objectives.complete(objective.id)!;
+        }
+        // APPROVE su errore/blocco/interruzione decide il checkpoint, ma non
+        // certifica successo: COMPLETATO resta riservato agli attempt riusciti.
+        return this.objectives.getById(objective.id)!;
       }
       case 'REQUEST_CHANGES': {
-        this.terminateCheckpointSession(objective.id, checkpointSessionId, 'Richieste modifiche');
+        this.terminateCheckpointSession(objective.id, checkpoint.sessionId, 'Richieste modifiche');
         return this.objectives.setStatus(objective.id, targetStatus)!;
       }
       case 'STOP': {
-        this.terminateCheckpointSession(objective.id, checkpointSessionId, 'Stop decisionale');
+        this.terminateCheckpointSession(objective.id, checkpoint.sessionId, 'Stop decisionale');
         return this.objectives.setStatus(objective.id, targetStatus)!;
       }
       case 'CANCEL': {
-        this.terminateCheckpointSession(objective.id, checkpointSessionId, 'Obiettivo annullato');
+        this.terminateCheckpointSession(objective.id, checkpoint.sessionId, 'Obiettivo annullato');
         this.objectives.setStatus(objective.id, targetStatus);
         // Solo se l'obiettivo annullato è davvero l'obiettivo corrente del
         // progetto: non deve azzerare la relazione di un altro obiettivo.
@@ -185,7 +190,7 @@ export class DecisionService {
         return this.objectives.getById(objective.id)!;
       }
       case 'RETRY': {
-        this.terminateCheckpointSession(objective.id, checkpointSessionId, 'Riprova avviata');
+        this.terminateCheckpointSession(objective.id, checkpoint.sessionId, 'Riprova avviata');
         return this.objectives.setStatus(objective.id, targetStatus)!;
       }
     }

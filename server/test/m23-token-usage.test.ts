@@ -229,5 +229,10 @@ describe("M23 - l'archivio G-Rex Pricing è attivo di default (DeepSeek V4 Flash
     expect(buildClineArgs({ objectiveText: 'fix', stopCondition: null, providerId: 'deepseek', model: 'deepseek-v4-flash' }))
       .toEqual(['--json', '--provider', 'deepseek', '--model', 'deepseek-v4-flash', 'fix']);
   });
+
+  it('il fallback Cline resta esplicito e non dipende da lastUsedProvider', () => {
+    expect(buildClineArgs({ objectiveText: 'fix', stopCondition: null, providerId: 'cline', model: null }))
+      .toEqual(['--json', '--provider', 'cline', 'fix']);
+  });
 });
 

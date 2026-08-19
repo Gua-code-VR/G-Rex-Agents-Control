@@ -136,6 +136,8 @@ describe('M22 - invarianti di prodotto V2', () => {
 
     const again = await built.app.inject({ method: 'POST', url: `/api/projects/${pid}/objectives`, payload: { title: 'Secondo', objectiveText: 'Secondo ciclo.' } });
     expect(again.statusCode).toBe(201);
+    const cleanup = await built.app.inject({ method: 'POST', url: `/api/objectives/${again.json().objective.id}/cancel` });
+    expect(cleanup.statusCode).toBe(200);
   });
 
   it('progetto senza obiettivo iniziale resta FERMO senza obiettivo', async () => {
