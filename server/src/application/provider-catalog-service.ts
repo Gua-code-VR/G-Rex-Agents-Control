@@ -128,9 +128,11 @@ export class ProviderCatalogService {
     const runtimeId = entry.runtime.id;
     const outputTokens = model?.limits.defaultOutputTokens ?? 0;
     const totalTokens = inputTokens + outputTokens;
-    if (!entry.runtime.available) return { runtimeId, providerId: entry.provider.id, modelId: model?.id ?? null, available: false, inputTokens, outputTokens, totalTokens, cost: null, confidence: 'UNAVAILABLE', reason: 'Runtime non disponibile' };
-    if (!model || model.pricing.inputPerMillion === null || model.pricing.outputPerMillion === null) return { runtimeId, providerId: entry.provider.id, modelId: model?.id ?? null, available: true, inputTokens, outputTokens, totalTokens, cost: null, confidence: 'UNAVAILABLE', reason: 'Pricing non configurato per il modello' };
+    // La disponibilità della CLI è un fatto operativo separato dal listino:
+    // la stima di costo dal pricing dichiarato resta deterministica anche
+    // quando il runtime non è installato sul sistema (available resta false).
+    if (!model || model.pricing.inputPerMillion === null || model.pricing.outputPerMillion === null) return { runtimeId, providerId: entry.provider.id, modelId: model?.id ?? null, available: entry.runtime.available, inputTokens, outputTokens, totalTokens, cost: null, confidence: 'UNAVAILABLE', reason: 'Pricing non configurato per il modello' };
     const cost = inputTokens / 1_000_000 * model.pricing.inputPerMillion + outputTokens / 1_000_000 * model.pricing.outputPerMillion;
-    return { runtimeId, providerId: entry.provider.id, modelId: model.id, available: true, inputTokens, outputTokens, totalTokens, cost: Number(cost.toFixed(8)), confidence: 'HIGH', reason: 'Stima deterministica da catalogo e pricing configurato' };
+    return { runtimeId, providerId: entry.provider.id, modelId: model.id, available: entry.runtime.available, inputTokens, outputTokens, totalTokens, cost: Number(cost.toFixed(8)), confidence: 'HIGH', reason: 'Stima deterministica da catalogo e pricing configurato' };
   }
 }

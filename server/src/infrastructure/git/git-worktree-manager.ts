@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -66,8 +67,22 @@ export interface MergeResult {
 const GIT_AUTHOR = ['-c', 'user.name=G-Rex Agent Control', '-c', 'user.email=agent-control@g-rex.local'];
 
 function normalizePath(p: string): string {
-  const resolved = path.resolve(p);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  let resolved = path.resolve(p);
+  if (process.platform === 'win32') {
+    // Git restituisce i percorsi in forma long-name con separatori `/`; i
+    // path costruiti da os.tmpdir() su Windows possono invece usare alias
+    // short-name (es. C:\Users\GUALTI~1). Risolviamo l'alias reale e
+    // uniformiamo i separatori prima del confronto case-insensitive, così
+    // worktreeExists/reconcile riconoscono lo stesso worktree fisico.
+    try {
+      resolved = fs.realpathSync.native(resolved);
+    } catch {
+      // Il percorso può non esistere (worktree rimosso): confronto testuale.
+    }
+    resolved = resolved.replace(/\\/g, '/');
+    return resolved.toLowerCase();
+  }
+  return resolved;
 }
 
 /** Confronto case-insensitive dei percorsi su Windows (worktree path). */

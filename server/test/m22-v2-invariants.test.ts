@@ -98,6 +98,14 @@ describe('M22 - invarianti di prodotto V2', () => {
     const detail = (await built.app.inject({ method: 'GET', url: `/api/objectives/${objectiveId}` })).json();
     expect(detail.sessions.length).toBeGreaterThanOrEqual(2);
     expect(detail.checkpoints.filter((c: { status: string }) => c.status === 'PENDING_DECISION')).toHaveLength(0);
+
+    // Pulizia del worker: il retry ha lasciato una sessione ATTIVA su un
+    // runtime fake che non completa mai. Annullare l'obiettivo chiude la
+    // sessione e risolve i checkpoint, liberando l'unico worker per i test
+    // successivi (l'autoStart §11.2 richiede un worker libero).
+    const cleanup = await built.app.inject({ method: 'POST', url: `/api/objectives/${objectiveId}/cancel` });
+    expect(cleanup.statusCode).toBe(200);
+    expect(await pendingDecisions()).toBe(0);
   });
   it("Cancella chiude i checkpoint pendenti e preserva l'audit", async () => {
     const pid = await newProject('m22-cancel');
