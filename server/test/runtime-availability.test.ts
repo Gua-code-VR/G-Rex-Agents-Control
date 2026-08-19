@@ -165,6 +165,45 @@ describe('CLI runtime availability', () => {
     expect(result.errorClass).toBe('CONNECTIVITY_ERROR');
   });
 
+  it('prefers the terminal Unauthorized reason over an earlier stderr hook diagnostic', async () => {
+    spawnSync.mockClear();
+    spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'powershell.exe' && args.includes('-Command')) {
+        return { status: 0, stdout: 'Application\tC:\\tools\\cline.exe\n' };
+      }
+      return { status: 0, stdout: 'version\n' };
+    });
+    const EventEmitter = (await import('node:events')).EventEmitter;
+    const stdout = new EventEmitter() as any;
+    const stderr = new EventEmitter() as any;
+    let onExit: ((code: number, signal: null) => void) | undefined;
+    const child = {
+      pid: 9,
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { setEncoding: vi.fn(), on: (ev: string, cb: Function) => { if (ev === 'data') stdout.on('data', cb as (...args: unknown[]) => void); } },
+      stderr: { setEncoding: vi.fn(), on: (ev: string, cb: Function) => { if (ev === 'data') stderr.on('data', cb as (...args: unknown[]) => void); } },
+      once: (ev: string, cb: Function) => { if (ev === 'exit') onExit = cb as (code: number, signal: null) => void; },
+      killed: false,
+      exitCode: null,
+    };
+    spawn.mockReturnValue(child);
+
+    const handle = await new ClineProvider('cline-terminal-reason').start({
+      objectiveId: 'o-terminal-reason', projectPath: null, objectiveText: 'do work', stopCondition: null,
+    });
+    stderr.emit('data', JSON.stringify({ type: 'error', message: 'hook dispatch failed: session.hook requires a valid hook event payload' }) + '\n');
+    stdout.emit('data', JSON.stringify({ type: 'agent_event', event: { type: 'done', reason: 'error', text: 'Unauthorized: Please verify your API key and permissions.' } }) + '\n');
+    stdout.emit('data', JSON.stringify({ type: 'run_result', finishReason: 'error', text: 'Unauthorized: Please verify your API key and permissions.' }) + '\n');
+    onExit?.(1, null);
+
+    const result = await handle.completion;
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      exitCode: 1,
+      reason: 'Unauthorized: Please verify your API key and permissions.',
+    });
+  });
+
   it('emits heartbeat while a silent Cline process is still alive', async () => {
     vi.useFakeTimers();
     spawnSync.mockImplementation((command: string, args: string[]) => {

@@ -442,11 +442,16 @@ function structuredTerminalOutcome(output: string): 'COMPLETED' | 'FAILED' | nul
 function extractErrorMessage(output: string): string {
   const lines = output.split(/\r?\n/).filter((line) => line.trim());
   let fallback = '';
+  let doneError = '';
+  let diagnosticError = '';
   for (const line of lines) {
     fallback = line.trim();
     try {
       const value = JSON.parse(line) as Record<string, any>;
-      const runResult = value.run_result as Record<string, any> | undefined;
+      // Cline emette `run_result` come evento top-level; alcuni adapter lo
+      // annidano invece in `run_result`. Questo è il record terminale e ha
+      // precedenza su ogni diagnostica precedente (es. hook falliti).
+      const runResult = (value.type === 'run_result' ? value : value.run_result) as Record<string, any> | undefined;
       if (runResult && (runResult.finishReason === 'error' || runResult.finishReason === 'failure')) {
         const text = typeof runResult.text === 'string' ? runResult.text.trim() : '';
         if (text) return truncate(text, 600);
@@ -458,20 +463,25 @@ function extractErrorMessage(output: string): string {
         const message = typeof event.text === 'string' && event.text.trim()
           ? event.text
           : typeof event.error?.message === 'string' ? event.error.message : '';
-        if (message.trim()) return truncate(message.trim(), 600);
+        // Conserva `done` come fallback strutturato: una successiva
+        // `run_result` terminale è più autorevole e deve poterlo sostituire.
+        if (message.trim()) doneError = truncate(message.trim(), 600);
+        continue;
       }
       if (event?.type === 'error') {
         const message = typeof event.error?.message === 'string' ? event.error.message
           : typeof event.message === 'string' ? event.message
           : typeof event.error === 'string' ? event.error : '';
-        if (message.trim()) return truncate(message.trim(), 600);
+        if (message.trim()) diagnosticError ||= truncate(message.trim(), 600);
       }
       if (value.type === 'error' && typeof value.message === 'string') {
-        if (value.message.trim()) return truncate(value.message.trim(), 600);
+        // Un errore libero nel flusso (per esempio un hook) è diagnostica:
+        // non può occultare un `done`/`run_result` terminale successivo.
+        if (value.message.trim()) diagnosticError ||= truncate(value.message.trim(), 600);
       }
     } catch { /* riga non-JSON: ignorata */ }
   }
-  return truncate(fallback, 600);
+  return doneError || diagnosticError || truncate(fallback, 600);
 }
 
 function truncate(value: string, max: number): string {
