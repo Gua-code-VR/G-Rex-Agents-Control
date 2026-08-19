@@ -105,7 +105,7 @@ export class EventService {
     sessionId?: string | null,
     category?: EventCategory | null,
   ): EventRecord[] {
-    const capped = Math.max(1, Math.min(200, Math.trunc(limit) || 50));
+    const capped = Math.max(1, Math.min(5_000, Math.trunc(limit) || 50));
     const rows = this.recentStmt.all(
       projectId ?? null,
       projectId ?? null,
