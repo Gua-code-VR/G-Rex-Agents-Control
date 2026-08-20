@@ -60,9 +60,9 @@ describe('M24 - coda di esecuzione', () => {
     expect(first.session.status).toBe('ATTIVA');
     expect(first.objective.status).toBe('IN_LAVORAZIONE');
 
-    // L'unico worker (fake) è occupato: il secondo obiettivo resta in coda.
-    const p2 = await project('M24 coda B');
-    const second = await objective(p2, 'Secondo');
+    // L'unico worker (fake) è occupato: un secondo obiettivo nello stesso
+    // progetto viene creato correttamente e resta in coda.
+    const second = await objective(p1, 'Secondo');
     expect(second.autoStart).toEqual({ started: false });
     expect(second.session.status).toBe('IN_AVVIO');
     expect(second.objective.status).toBe('IN_AVVIO');
