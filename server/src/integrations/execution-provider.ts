@@ -575,18 +575,24 @@ export class CodexProvider extends LocalCliProvider {
     const model = params.model ?? this.defaultModel;
     // L'alias `codex-default` non è supportato da un account ChatGPT: blocca
     // l'avvio della combinazione (difesa in profondità rispetto al catalogo).
-    if (this.authMode === 'chatgpt' && model === 'codex-default') {
+    // Il confronto è case-insensitive: un caso variato dell'alias (es. fornito
+    // dall'operatore come `CODEX-DEFAULT`) non deve aggirare il guard.
+    if (this.authMode === 'chatgpt' && model != null && model.toLowerCase() === 'codex-default') {
       throw new Error(`Combinazione non supportata dall'autenticazione corrente: modello codex-default non disponibile per Codex CLI autenticato con account ChatGPT`);
     }
     if (model) args.push('--model', model);
     return this.launch([...args, prompt], params);
   }
   catalog(): ProviderCatalogEntry[] {
-    // Un account ChatGPT non espone l'alias `codex-default`. Quando l'operatore
-    // non configura un modello esplicito, il catalogo dichiara quindi il modello
-    // gestito dal runtime (nessun modelId): selezione, validazione e UI lo
-    // escludono automaticamente da questa unica sorgente (§12, autenticazione).
-    const chatgptWithoutExplicitModel = this.authMode === 'chatgpt' && this.defaultModel === null;
+    // Un account ChatGPT non espone l'alias `codex-default`, in nessun caso:
+    // né quando l'operatore non configura un modello esplicito, né quando lo
+    // configura proprio con l'alias (in qualunque caso, dato che il confronto è
+    // case-insensitive). Il catalogo dichiara quindi il modello gestito dal
+    // runtime (nessun modelId): selezione, validazione e UI lo escludono
+    // automaticamente da questa unica sorgente (§12, autenticazione).
+    const isChatgpt = this.authMode === 'chatgpt';
+    const configuredModelIsAlias = this.defaultModel != null && this.defaultModel.toLowerCase() === 'codex-default';
+    const chatgptWithoutExplicitModel = isChatgpt && (this.defaultModel === null || configuredModelIsAlias);
     const id = chatgptWithoutExplicitModel ? null : (this.defaultModel ?? 'codex-default');
     if (id === null) {
       return [{
