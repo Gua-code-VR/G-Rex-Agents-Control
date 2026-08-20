@@ -311,8 +311,8 @@ describe('M3 - obiettivi e sessioni agente', () => {
     expect(project.status).toBe('FERMO');
     expect(checkpoint).toBeNull();
 
-    // COMPLETATO è terminale: l'invariante §14 è liberato, un nuovo
-    // obiettivo è subito ammesso.
+    // COMPLETATO è terminale: un nuovo obiettivo resta ammesso e parte se
+    // la coda trova uno slot libero.
     const again = await built.app.inject({
       method: 'POST',
       url: `/api/projects/${completeProjectId}/objectives`,
