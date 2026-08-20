@@ -192,6 +192,9 @@ d'ambiente opzionali:
 | `GAC_EXECUTION_RETRY_BACKOFF_MS` | `1000` | Backoff lineare tra retry e fallback |
 | `GAC_EXECUTION_FALLBACK_RUNTIME` | — | Runtime alternativo dopo l’esaurimento dei retry |
 | `GAC_EXECUTION_COST_BUDGET` | — | Budget massimo globale di costo per attempt (governance/alert) |
+| `GAC_NATIVE_WORKFLOW_ENABLED` | `true` | Abilita il contratto di orchestrazione multi-worker per i runtime team-aware |
+| `GAC_NATIVE_WORKFLOW_MAX_WORKERS` | `4` | Numero massimo di worker paralleli richiesto al runtime (2–16) |
+| `GAC_NATIVE_WORKFLOW_RUNTIMES` | `cline` | Runtime abilitati, separati da virgola, per il motore team nativo |
 
 ### Accesso remoto via Tailscale
 

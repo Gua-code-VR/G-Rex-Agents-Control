@@ -58,6 +58,9 @@ export interface AppConfig {
   executionRetryBackoffMs: number;
   executionFallbackRuntime: string | null;
   executionCostBudget: number | null;
+  nativeWorkflowEnabled: boolean;
+  nativeWorkflowMaxWorkers: number;
+  nativeWorkflowRuntimeIds: string[];
   // M7: autenticazione e accesso remoto
   /** Giorni di durata sessione (default 30). */
   sessionTtlDays: number;
@@ -123,6 +126,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const executionRetryBackoffMs = positiveMs(env.GAC_EXECUTION_RETRY_BACKOFF_MS, 1_000);
   const executionFallbackRuntime = env.GAC_EXECUTION_FALLBACK_RUNTIME?.trim() || null;
   const executionCostBudget = nonNegativeNumber(env.GAC_EXECUTION_COST_BUDGET);
+  const nativeWorkflowEnabled = env.GAC_NATIVE_WORKFLOW_ENABLED !== 'false';
+  const nativeWorkflowMaxWorkers = boundedInt(env.GAC_NATIVE_WORKFLOW_MAX_WORKERS, 4, 2, 16);
+  const nativeWorkflowRuntimeIds = (env.GAC_NATIVE_WORKFLOW_RUNTIMES ?? 'cline')
+    .split(',').map((value) => value.trim()).filter(Boolean);
 
   // M7: sessione e rete
   const rawTtl = Number(env.GAC_SESSION_TTL_DAYS ?? 30);
@@ -174,6 +181,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     executionRetryBackoffMs,
     executionFallbackRuntime,
     executionCostBudget,
+    nativeWorkflowEnabled,
+    nativeWorkflowMaxWorkers,
+    nativeWorkflowRuntimeIds,
     sessionTtlDays,
     bindAll,
     bindAddress,
