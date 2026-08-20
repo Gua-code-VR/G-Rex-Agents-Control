@@ -49,10 +49,29 @@ describe('Autenticazione runtime/model — Codex con account ChatGPT', () => {
     expect(codex.models.map((m) => m.id)).toEqual(['gpt-5']);
   });
 
+  it('catalogo chatgpt con GAC_CODEX_MODEL=codex-default: non propone l\'alias (modello gestito dal runtime)', () => {
+    const catalog = new CodexProvider('codex', true, 'codex-default', undefined, 'chatgpt').catalog();
+    const codex = catalog[0];
+    expect(codex.runtime.defaultModel).toBeNull();
+    expect(codex.models).toEqual([]);
+    expect(codex.models.some((m) => m.id === 'codex-default')).toBe(false);
+  });
+
+  it('catalogo chatgpt con modello esplicito case-variato (CODEX-DEFAULT): non espone l\'alias', () => {
+    const catalog = new CodexProvider('codex', true, 'CODEX-DEFAULT', undefined, 'chatgpt').catalog();
+    const codex = catalog[0];
+    expect(codex.runtime.defaultModel).toBeNull();
+    expect(codex.models).toEqual([]);
+  });
+
   it('avvio chatgpt: blocca un codex-default forzato esplicitamente', async () => {
     const provider = new CodexProvider('codex', true, null, undefined, 'chatgpt');
     await expect(provider.start({
       objectiveId: 'o', projectPath: null, objectiveText: 'test', stopCondition: null, model: 'codex-default',
+    })).rejects.toThrow(/account ChatGPT/);
+    // Un caso variato dell'alias non deve aggirare il guard di avvio.
+    await expect(provider.start({
+      objectiveId: 'o', projectPath: null, objectiveText: 'test', stopCondition: null, model: 'CODEX-DEFAULT',
     })).rejects.toThrow(/account ChatGPT/);
     await expect(provider.start({
       objectiveId: 'o', projectPath: null, objectiveText: 'test', stopCondition: null, model: null,

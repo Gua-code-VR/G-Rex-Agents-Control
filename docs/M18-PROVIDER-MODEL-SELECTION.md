@@ -91,8 +91,12 @@ dichiarata dall'operatore con `GAC_CODEX_AUTH` (`api-key` di default, oppure
   esclude il modello dal catalogo (modello gestito dal runtime, nessun
   `modelId`), la validazione rifiuta un `codex-default` esplicito e l'avvio lo
   blocca. Selezione automatica e UI ereditano l'esclusione dall'unica sorgente
-  del catalogo.
+  del catalogo. L'esclusione vale in ogni caso, anche se l'operatore configura
+  `GAC_CODEX_MODEL` proprio con l'alias (in qualsiasi maiuscola/minuscola):
+  in quella situazione il catalogo tratta il modello come gestito dal runtime e
+  il guard di avvio blocca comunque un caso variato.
 
 Un modello esplicito configurato con `GAC_CODEX_MODEL` resta rispettato
-(la scelta dell'operatore prevale).
+(la scelta dell'operatore prevale), purché nomini un modello realmente
+supportato dall'autenticazione corrente.
 
