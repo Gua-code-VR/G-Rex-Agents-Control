@@ -9,7 +9,6 @@ import {
   type Project,
   type StatusResponse,
   type Checkpoint,
-  type Notification,
   type ExecutionProvider,
   type GovernanceDashboard,
 } from './api/client';
@@ -78,7 +77,6 @@ export default function App() {
   const [objectiveBusy, setObjectiveBusy] = useState<Record<string, boolean>>({});
   const [creatingObjective, setCreatingObjective] = useState(false);
   const [decidingCheckpoint, setDecidingCheckpoint] = useState<string | null>(null);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [providers, setProviders] = useState<ExecutionProvider[]>([]);
 
   // M7: Check auth on mount
@@ -103,8 +101,8 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [sr, pr, er, nr, runtimeList] = await Promise.all([api.status(), api.listProjects(), api.listEvents(30), api.listNotifications(), api.listExecutionProviders()]);
-      setStatus(sr); setProjects(pr.projects); setEvents(er.events); setNotifications(nr.notifications); setProviders(runtimeList.providers); setCostToday(sr.costToday);
+      const [sr, pr, er, runtimeList] = await Promise.all([api.status(), api.listProjects(), api.listEvents(30), api.listExecutionProviders()]);
+      setStatus(sr); setProjects(pr.projects); setEvents(er.events); setProviders(runtimeList.providers); setCostToday(sr.costToday);
       await loadM3(pr.projects); setLoadState('ready'); setError(null);
     } catch (err) { setLoadState('error'); setError(err instanceof Error ? err.message : String(err)); }
   }, [loadM3]);
@@ -119,10 +117,6 @@ export default function App() {
       void refresh();
     }
   }, [checkingAuth, authenticated, refresh]);
-  useEffect(() => {
-    const timer = window.setInterval(() => { void api.listNotifications().then((r) => setNotifications(r.notifications)).catch(() => undefined); }, 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
   // Refresh automatico affidabile: la UI resta allineata al backend.
   useEffect(() => {
     const timer = window.setInterval(() => { if (authenticated) void refresh(); }, 15_000);
@@ -189,7 +183,6 @@ export default function App() {
   const handleCancel = (oId: string) => runObjAction(oId, () => api.cancelObjective(oId));
   const handleRetry = (oId: string, selection?: { runtimeId: string; providerId?: string; modelId?: string | null }) => runObjAction(oId, () => api.retryObjective(oId, selection));
   const openHelp = (topic: HelpTopicId) => { setHelpTopic(topic); setActiveTab('help'); };
-  const markNotificationsRead = async () => { await api.markAllNotificationsRead(); setNotifications([]); };
   const handleCreateObj = async (input: CreateObjectiveInput) => {
     setCreatingObjective(true); setActionError(null);
     try { await api.createObjective(selectedProjectId, input); await refresh(); }
@@ -234,10 +227,6 @@ export default function App() {
           )}
           {/* CONTROL ROOM (cockpit operativo — Fase 2, §5) */}
           {activeTab === 'control-room' && (<div className="tab-content control-room-tab">
-            {notifications.length > 0 && <section className="card" aria-live="polite">
-              <div className="git-box-head"><h2>Notifiche ({notifications.length})</h2><button type="button" className="btn btn-ghost" onClick={() => void markNotificationsRead()}>Segna lette</button></div>
-              <ul className="event-list">{notifications.slice(0, 5).map((notification) => <li key={notification.id}><time>{formatDate(notification.createdAt)}</time><code>{notification.severity}</code><span><strong>{notification.title}</strong> — {notification.message}</span></li>)}</ul>
-            </section>}
             <ControlRoom
               projects={projects}
               objectivesByProject={objectivesByProject}
@@ -280,7 +269,7 @@ export default function App() {
               onStart={handleStart} onStop={handleStop} onComplete={handleComplete}
               onBlock={handleBlock} onFail={handleFail} onCancel={handleCancel}
               onRetry={handleRetry}
-              onDecide={handleDecide} deciding={decidingCheckpoint} providers={providers}
+              onDecide={handleDecide} deciding={decidingCheckpoint}
               onOpenHelp={openHelp} />
           </div>)}
 

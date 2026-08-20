@@ -9,6 +9,7 @@ import {
   type RuntimeApproval,
 } from '../api/client';
 import { computeRequiresYou } from '../lib/requires-you';
+import { buildSelectionOptions } from '../lib/execution-selection';
 import { HelpLink } from './HelpLink';
 import type { HelpTopicId } from '../content/help';
 
@@ -84,10 +85,9 @@ export function RequiresYouView({
   const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
 
   useEffect(() => { void api.getProviderCatalog().then((r) => setCatalog(r.catalog)).catch(() => setCatalog([])); }, []);
-  const agentOptions = catalog.flatMap((entry) => entry.models.map((model) => ({
-    value: `${entry.runtime.id}|${entry.provider.id}|${model.id}`,
-    label: `${entry.runtime.name} · ${entry.provider.name} · ${model.name}`,
-  })));
+  // Opzioni normalizzate dalla sorgente unica (runtime·provider·modello, con
+  // `fake` nascosto quando esiste un runtime reale operativo).
+  const agentOptions = buildSelectionOptions(catalog);
 
   const objectives = Object.values(objectivesByProject).flat();
   const objectiveById = new Map(objectives.map((o) => [o.id, o] as const));

@@ -8,15 +8,13 @@ import {
   type DecisionType,
   type EventRecord,
   type ExecutionAttempt,
-  type ExecutionProvider,
   type Objective,
   type Project,
-  type ProviderCatalogEntry,
 } from '../api/client';
 import { CheckpointList } from './CheckpointList';
-import { catalogEntriesFor, defaultModelId, modelsForProvider, providersForRuntime } from '../lib/provider-catalog';
 import { OBJECTIVE_STATUS_LABEL, SESSION_STATUS_LABEL } from '../lib/labels';
 import { HelpLink, InlineHelp } from './HelpLink';
+import { ExecutionSelectionControls } from './ExecutionSelectionControls';
 import type { HelpTopicId } from '../content/help';
 
 function formatDate(value: string): string {
@@ -66,7 +64,6 @@ export interface ObjectiveViewProps {
   onRetry: (oId: string, selection?: { runtimeId: string; providerId?: string; modelId?: string | null }) => void;
   onDecide: (cId: string, dt: DecisionType, note?: string) => void;
   deciding?: string | null;
-  providers: ExecutionProvider[];
   onOpenHelp: (topic: HelpTopicId) => void;
 }
 
@@ -95,7 +92,6 @@ export function ObjectiveView({
   onRetry,
   onDecide,
   deciding,
-  providers,
   onOpenHelp,
 }: ObjectiveViewProps) {
   const selected = projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null;
@@ -122,7 +118,6 @@ export function ObjectiveView({
       {selected && (
         <CreateObjectiveForm
           selected={selected}
-          providers={providers}
           creating={creating}
           onCreate={onCreate}
           onOpenHelp={onOpenHelp}
@@ -156,9 +151,9 @@ export function ObjectiveView({
 
 
 function CreateObjectiveForm({
-  selected, providers, creating, onCreate, onOpenHelp,
+  selected, creating, onCreate, onOpenHelp,
 }: {
-  selected: Project; providers: ExecutionProvider[]; creating: boolean;
+  selected: Project; creating: boolean;
   onCreate: (input: CreateObjectiveInput) => Promise<void>;
   onOpenHelp: (topic: HelpTopicId) => void;
 }) {
@@ -170,32 +165,11 @@ function CreateObjectiveForm({
   const [estimatedCost, setEstimatedCost] = useState('');
   const [mode, setMode] = useState<'automatic' | 'manual'>('automatic');
   const [runtime, setRuntime] = useState('');
-  const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
   const [providerId, setProviderId] = useState('');
   const [modelId, setModelId] = useState('');
   const [outputTokenLimit, setOutputTokenLimit] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
-
-  const runtimeEntries = catalog.filter((entry) => entry.runtime.id === runtime);
-  // Il catalogo può dichiarare più entry per lo stesso (runtime, provider): il
-  // selettore modello deve mostrare TUTTI i modelli dell'AI Catalog per il
-  // provider selezionato (unione delle entry, deduplicata per id).
-  const selectedProviderEntries = catalogEntriesFor(catalog, runtime, providerId);
-  const selectedProviderModels = modelsForProvider(catalog, runtime, providerId);
-  const providerOptions = providersForRuntime(catalog, runtime);
-
-  useEffect(() => {
-    void api.getProviderCatalog().then((result) => setCatalog(result.catalog)).catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    if (runtimeEntries.length === 0) { setProviderId(''); setModelId(''); return; }
-    const first = runtimeEntries[0];
-    setProviderId(first.provider.id);
-    setModelId(defaultModelId(catalog, runtime, first.provider.id));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime, catalog]);
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -243,29 +217,14 @@ function CreateObjectiveForm({
       </fieldset>
 
       {mode === 'manual' && (
-        <div className="runtime-selection objective-runtime-selection">
+        <div className="objective-runtime-selection">
           <InlineHelp topic="runtime-provider-modello" onOpenHelp={onOpenHelp}>La scelta manuale vincola il motore usato dall’obiettivo.</InlineHelp>
-          <label className="field">Runtime
-            <select value={runtime} onChange={(e) => setRuntime(e.target.value)} disabled={creating}>
-              <option value="">Seleziona runtime</option>
-              {providers.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.runtimeName}{provider.configured ? '' : ' (non disponibile)'}</option>)}
-            </select>
-          </label>
-          <label className="field">Provider
-            <select value={providerId} disabled={creating || runtimeEntries.length === 0}
-              onChange={(e) => { setProviderId(e.target.value); setModelId(defaultModelId(catalog, runtime, e.target.value)); }}>
-              {providerOptions.length === 0
-                ? <option value="">Seleziona un runtime</option>
-                : providerOptions.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
-            </select>
-          </label>
-          <label className="field">Modello
-            <select value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={creating || selectedProviderEntries.length === 0 || selectedProviderModels.length === 0}>
-              <option value="">{selectedProviderModels.length ? 'Seleziona modello' : 'Gestito dal runtime'}</option>
-              {selectedProviderModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
-            </select>
-          </label>
-          <label className="field">Output max <input type="number" min="1" max={selectedProviderModels.find((model) => model.id === modelId)?.limits.defaultOutputTokens || undefined} value={outputTokenLimit} onChange={(e) => setOutputTokenLimit(e.target.value)} placeholder="Limite catalogo" disabled={creating || !modelId} /></label>
+          <ExecutionSelectionControls
+            value={{ runtimeId: runtime, providerId, modelId }}
+            onChange={(v) => { setRuntime(v.runtimeId); setProviderId(v.providerId); setModelId(v.modelId); }}
+            disabled={creating}
+          />
+          <label className="field">Output max <input type="number" min="1" value={outputTokenLimit} onChange={(e) => setOutputTokenLimit(e.target.value)} placeholder="Limite catalogo" disabled={creating || !modelId} /></label>
         </div>
       )}
 

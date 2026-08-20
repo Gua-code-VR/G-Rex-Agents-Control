@@ -91,6 +91,58 @@ function kind(event: EventRecord) {
   return text.includes('workflow.native') ? 'workflow' : text.includes('heartbeat') ? 'heartbeat' : text.includes('fallback') ? 'fallback' : text.includes('retry') ? 'retry' : text.includes('tool') ? 'tool' : 'event';
 }
 
+/** Etichette leggibili dei bucket di evento mostrati nella timeline del Monitor. */
+const EVENT_KIND_LABEL: Record<string, string> = {
+  workflow: 'Workflow nativo',
+  heartbeat: 'Heartbeat',
+  fallback: 'Fallback',
+  retry: 'Retry',
+  tool: 'Strumento',
+  event: 'Evento',
+};
+
+export function eventKindLabel(kindValue: string): string {
+  return EVENT_KIND_LABEL[kindValue] ?? kindValue;
+}
+
+/** Etichette leggibili dello stato di un run team (join/fan-out del runtime). */
+const RUN_STATUS_LABEL: Record<string, string> = {
+  queued: 'In coda',
+  running: 'In esecuzione',
+  started: 'Avviato',
+  completed: 'Completato',
+  succeeded: 'Completato',
+  success: 'Completato',
+  failed: 'Fallito',
+  error: 'Errore',
+  cancelled: 'Annullato',
+  canceled: 'Annullato',
+  blocked: 'Bloccato',
+};
+
+export function runStatusLabel(status: string | null): string {
+  if (!status) return '—';
+  return RUN_STATUS_LABEL[status.toLowerCase()] ?? status;
+}
+
+/** Indica se un evento persistito rappresenta un errore corrente (per evidenza). */
+const ERROR_EVENT_TYPE_PATTERNS: RegExp[] = [
+  /\.error$/u,
+  /\.failed$/u,
+  /\.rejected$/u,
+  /\.stale$/u,
+  /\berror$/u,
+];
+
+export function isErrorEvent(event: EventRecord): boolean {
+  if (ERROR_EVENT_TYPE_PATTERNS.some((pattern) => pattern.test(event.type))) return true;
+  if (isRecord(event.payload)) {
+    const outcome = stringValue(event.payload.outcome);
+    if (outcome && /failed|error|cancelled/i.test(outcome)) return true;
+  }
+  return false;
+}
+
 /** Stato sintetico, derivato esclusivamente dagli eventi persistiti del Control Plane. */
 export function extractNativeWorkflowSummary(events: EventRecord[]): NativeWorkflowSummary | null {
   let summary: NativeWorkflowSummary | null = null;
@@ -396,7 +448,7 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
                             <span>{run.task}</span>
                           </div>
                         </div>
-                        <span className="worker-timeline-status">{run.status}</span>
+                        <span className="worker-timeline-status">{runStatusLabel(run.status)}</span>
                       </div>
                     );
                   })}
@@ -421,7 +473,7 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
                           <td className="mono">{run.id}</td>
                           <td>{run.worker}</td>
                           <td>{run.task}</td>
-                          <td>{run.status}</td>
+                          <td>{runStatusLabel(run.status)}</td>
                           <td>{run.startedAt ?? '—'}</td>
                           <td>{run.endedAt ?? '—'}</td>
                           <td>{formatDuration(run.durationMs)}</td>
@@ -443,10 +495,11 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
                   {events.map((event) => {
                     const type = kind(event);
                     return (
-                      <li key={event.id} className={`monitor-event monitor-event-${type}`}>
+                      <li key={event.id} className={`monitor-event monitor-event-${type} ${isErrorEvent(event) ? 'monitor-event-error' : ''}`}>
                         <time>{new Date(event.timestamp).toLocaleTimeString('it-IT')}</time>
-                        <span className="monitor-event-kind">{type}</span>
+                        <span className="monitor-event-kind">{eventKindLabel(type)}</span>
                         <div>
+                          {isErrorEvent(event) && <span className="badge badge-errore">Errore</span>}
                           <strong>{event.type}</strong>
                           <p>{summarizeEventPayload(event.payload) || event.type.replace(/\./g, ' ')}</p>
                           {event.payload !== null && <details><summary>Dettagli tecnici raw</summary><pre>{raw(event.payload)}</pre></details>}
@@ -485,7 +538,7 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
                 <section className="panel monitor-workers">
                   <div className="panel-head"><h2>Worker e task</h2><span className={workers.length > 1 ? 'parallel-badge' : 'muted small'}>{workers.length > 1 ? 'In parallelo' : 'Tracciato'}</span></div>
                   <p className="muted small">Rilevati dagli eventi del runtime.</p>
-                  <ul>{workers.map((w) => <li key={w.id}><strong>{w.id}</strong><span>{w.task ? `Task ${w.task}` : 'Task non indicato'} · {w.events.length} eventi</span></li>)}</ul>
+                  <ul>{workers.map((w) => <li key={w.id}><strong>Worker {w.id}</strong><span>Task: {w.task ?? 'non indicato'}</span><span className="muted small">{w.events.length} eventi</span></li>)}</ul>
                 </section>
               )}
             </aside>
