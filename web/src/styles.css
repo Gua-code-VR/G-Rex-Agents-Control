@@ -8,6 +8,9 @@
   --muted: #94a3b8;
   --accent: #4ade80;
   --danger: #f87171;
+  /* Titoli di pannello/sezione: colore e tipografia distinti dal corpo,
+     coerenti col tema. Help e Configurazione restano esclusi (classi proprie). */
+  --heading: #9db7e0;
 }
 
 * {
@@ -1440,7 +1443,24 @@ select {
 /* Pannelli: meno bordi, gerarchia chiara (§17). */
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.panel-head h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+/* Gerarchia visiva (§17): i titoli di pannello/sezione usano un colore e una
+   tipografia distinti dal corpo (--heading), applicati in modo uniforme alle
+   pagine operative. Help e Configurazione usano classi proprie e non vengono
+   toccati da questi selettori. */
+.panel-head h2,
+.card h2,
+.git-box-head h2,
+.objective-form h3 {
+  color: var(--heading);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+.panel-head h2 { margin: 0; font-size: 0.85rem; }
+.card h2 { margin: 0 0 14px; font-size: 0.85rem; }
+.git-box-head h2 { font-size: 0.85rem; }
+.objective-form h3 { margin: 0 0 4px; font-size: 0.85rem; }
+.drawer-title { color: var(--heading); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
 
 /* Tabella operativa compatta (§5: "compact operational rows"). */
 .ops-table { display: flex; flex-direction: column; min-width: 0; }
@@ -1454,6 +1474,25 @@ select {
 .ops-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
 .ops-cell .badge { flex-shrink: 0; }
 .ops-objective { flex-wrap: wrap; }
+
+/* Progetti attivi/in lavorazione: chiaramente distinguibili (Control Room). */
+.ops-row.project-active {
+  background: linear-gradient(90deg, rgba(74, 222, 128, 0.10), transparent 60%);
+  box-shadow: inset 3px 0 0 #4ade80;
+}
+.project-active-label {
+  color: #4ade80; font-size: 0.76rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap;
+}
+
+/* Pannelli collassabili di default con conteggio nella testata (Control Room). */
+.panel-collapsible summary { list-style: none; cursor: pointer; }
+.panel-collapsible summary::-webkit-details-marker { display: none; }
+.panel-collapsible summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+.panel-collapsible-head.panel-head { margin-bottom: 0; }
+.panel-collapsible[open] .panel-collapsible-head { margin-bottom: 12px; }
+.panel-collapsible .panel-collapsible-body { padding-top: 4px; }
+.panel-collapsible-meta { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 .link-btn {
   background: none; border: none; padding: 0; color: var(--text); font-size: inherit;

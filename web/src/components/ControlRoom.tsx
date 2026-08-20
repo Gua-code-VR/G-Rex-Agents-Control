@@ -144,6 +144,20 @@ export function ControlRoom({
   const completedObjectives = objectives.filter((o) => o.status === 'COMPLETATO');
   const recentCompletions = completedObjectives.slice(-6).reverse();
 
+  // Progetti attivi/in lavorazione: statusGroup IN_LAVORAZIONE oppure con
+  // obiettivi aperti (IN_AVVIO / IN_LAVORAZIONE / RICHIEDE_ATTENZIONE).
+  // Coerente con la semantica di ProjectView (activeObjectives/backlog).
+  const activeProjectIds = useMemo(() => {
+    const openStatuses = new Set<Objective['status']>(['IN_AVVIO', 'IN_LAVORAZIONE', 'RICHIEDE_ATTENZIONE']);
+    const active = new Set<string>();
+    for (const project of projects) {
+      const hasOpen = (objectivesByProject[project.id] ?? []).some((o) => openStatuses.has(o.status));
+      if (project.statusGroup === 'IN_LAVORAZIONE' || hasOpen) active.add(project.id);
+    }
+    return active;
+  }, [projects, objectivesByProject]);
+  const activeProjectCount = activeProjectIds.size;
+
   // «Richiede te» con la stessa semantica di RequiresYouView e del badge:
   // checkpoint pendenti + approvazioni budget + approvazioni runtime.
   const needsYouCount = pendingCheckpoints.length + pendingApprovals.length + runtimeApprovals.length;
@@ -240,71 +254,85 @@ export function ControlRoom({
 
 
           <section className="panel projects-overview">
-            <div className="panel-head">
-              <h2>Progetti</h2>
-              <button type="button" className="btn btn-ghost" onClick={() => onNavigate('projects')}>Apri Progetti</button>
-            </div>
-            {projects.length === 0 ? (
-              <p className="muted">Nessun progetto registrato.</p>
-            ) : (
-              <div className="ops-table" role="table" aria-label="Progetti">
-                <div className="ops-row ops-head" role="row">
-                  <span role="columnheader">Progetto</span>
-                  <span role="columnheader">Stato</span>
-                  <span role="columnheader">Obiettivo corrente</span>
-                </div>
-                {projects.map((project) => {
-                  const openObjectives = (objectivesByProject[project.id] ?? []).filter(
-                    (o) => o.status === 'IN_AVVIO' || o.status === 'IN_LAVORAZIONE' || o.status === 'RICHIEDE_ATTENZIONE',
-                  ).length;
-                  return (
-                    <div className="ops-row" role="row" key={project.id}>
-                      <span className="ops-cell ops-project" role="cell">
-                        <button type="button" className="link-btn" onClick={() => onSelectProject(project.id)}>{project.name}</button>
-                      </span>
-                      <span className="ops-cell" role="cell">
-                        <span className={`badge badge-${project.status.toLowerCase()}`}>{GROUP_LABEL[project.statusGroup]}</span>
-                        {openObjectives > 0 && <span className="muted small"> · {openObjectives} aperti</span>}
-                      </span>
-                      <span className="ops-cell" role="cell">
-                        {project.currentObjective ?? <span className="muted">—</span>}
-                      </span>
+            <details className="panel-collapsible">
+              <summary className="panel-collapsible-head panel-head">
+                <h2>Progetti</h2>
+                <span className="panel-collapsible-meta muted small">
+                  {projects.length} progetti
+                  {activeProjectCount > 0 && <span className="project-active-label"> · {activeProjectCount} in lavorazione</span>}
+                </span>
+                <button type="button" className="btn btn-ghost" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onNavigate('projects'); }}>Apri Progetti</button>
+              </summary>
+              <div className="panel-collapsible-body">
+                {projects.length === 0 ? (
+                  <p className="muted">Nessun progetto registrato.</p>
+                ) : (
+                  <div className="ops-table" role="table" aria-label="Progetti">
+                    <div className="ops-row ops-head" role="row">
+                      <span role="columnheader">Progetto</span>
+                      <span role="columnheader">Stato</span>
+                      <span role="columnheader">Obiettivo corrente</span>
                     </div>
-                  );
-                })}
+                    {projects.map((project) => {
+                      const openObjectives = (objectivesByProject[project.id] ?? []).filter(
+                        (o) => o.status === 'IN_AVVIO' || o.status === 'IN_LAVORAZIONE' || o.status === 'RICHIEDE_ATTENZIONE',
+                      ).length;
+                      const isActive = activeProjectIds.has(project.id);
+                      return (
+                        <div className={`ops-row ${isActive ? 'project-active' : ''}`} role="row" key={project.id}>
+                          <span className="ops-cell ops-project" role="cell">
+                            <button type="button" className="link-btn" onClick={() => onSelectProject(project.id)}>{project.name}</button>
+                            {isActive && <span className="project-active-label">in lavorazione</span>}
+                          </span>
+                          <span className="ops-cell" role="cell">
+                            <span className={`badge badge-${project.status.toLowerCase()}`}>{GROUP_LABEL[project.statusGroup]}</span>
+                            {openObjectives > 0 && <span className="muted small"> · {openObjectives} aperti</span>}
+                          </span>
+                          <span className="ops-cell" role="cell">
+                            {project.currentObjective ?? <span className="muted">—</span>}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            )}
+            </details>
           </section>
 
           <section className="panel recent-results">
-            <div className="panel-head">
-              <h2>Risultati recenti</h2>
-              <span className="muted small">{completedObjectives.length} completati</span>
-            </div>
-            {recentCompletions.length === 0 ? (
-              <p className="muted">Nessun obiettivo completato di recente.</p>
-            ) : (
-              <ul className="result-list">
-                {recentCompletions.map((o) => {
-                  const project = projectById.get(o.projectId);
-                  return (
-                    <li key={o.id} className="result-row">
-                      <details className="result-collapsible">
-                        <summary className="result-head">
-                        <button type="button" className="link-btn" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelectProject(o.projectId); }}>
-                          {project?.name ?? shortId(o.projectId)}
-                        </button>
-                        <span className="muted small">→</span>
-                        <strong>{o.title}</strong>
-                        <span className={`badge badge-${o.status.toLowerCase()}`}>{OBJECTIVE_STATUS_LABEL[o.status]}</span>
-                        </summary>
-                        {o.finalReport && <p className="result-report muted small">{o.finalReport}</p>}
-                      </details>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+            <details className="panel-collapsible">
+              <summary className="panel-collapsible-head panel-head">
+                <h2>Risultati recenti</h2>
+                <span className="panel-collapsible-meta muted small">{completedObjectives.length} completati</span>
+              </summary>
+              <div className="panel-collapsible-body">
+                {recentCompletions.length === 0 ? (
+                  <p className="muted">Nessun obiettivo completato di recente.</p>
+                ) : (
+                  <ul className="result-list">
+                    {recentCompletions.map((o) => {
+                      const project = projectById.get(o.projectId);
+                      return (
+                        <li key={o.id} className="result-row">
+                          <details className="result-collapsible">
+                            <summary className="result-head">
+                            <button type="button" className="link-btn" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelectProject(o.projectId); }}>
+                              {project?.name ?? shortId(o.projectId)}
+                            </button>
+                            <span className="muted small">→</span>
+                            <strong>{o.title}</strong>
+                            <span className={`badge badge-${o.status.toLowerCase()}`}>{OBJECTIVE_STATUS_LABEL[o.status]}</span>
+                            </summary>
+                            {o.finalReport && <p className="result-report muted small">{o.finalReport}</p>}
+                          </details>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </details>
           </section>
         </div>
 
