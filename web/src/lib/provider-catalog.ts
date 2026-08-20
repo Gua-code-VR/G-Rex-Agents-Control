@@ -1,4 +1,4 @@
-import type { ProviderCatalogEntry } from '../api/client';
+import type { ExecutionProvider, ProviderCatalogEntry } from '../api/client';
 
 /** Entry del catalogo per (runtime, provider). Il catalogo può dichiararne più
  *  di una per lo stesso provider (es. più provider dell'archivio G-Rex Pricing
@@ -55,4 +55,23 @@ export function defaultModelId(
   const entries = catalogEntriesFor(catalog, runtimeId, providerId);
   const declared = entries.map((entry) => entry.runtime.defaultModel).find(Boolean);
   return declared ?? modelsForProvider(catalog, runtimeId, providerId)[0]?.id ?? '';
+}
+
+/**
+ * Nasconde il runtime di test `fake` quando esiste almeno un runtime reale
+ * realmente disponibile nel catalogo. `fake` resta visibile soltanto come
+ * fallback in ambiente di test/demo, quando nessun runtime reale è disponibile
+ * (regola V2: i runtime di test non partecipano al routing operativo).
+ */
+export function filterOperationalCatalog(catalog: ProviderCatalogEntry[]): ProviderCatalogEntry[] {
+  const hasRealRuntime = catalog.some((entry) => entry.runtime.id !== 'fake' && entry.runtime.available);
+  if (!hasRealRuntime) return catalog;
+  return catalog.filter((entry) => entry.runtime.id !== 'fake');
+}
+
+/** Analogo di `filterOperationalCatalog` per i provider configurati (SystemView, selettori). */
+export function filterOperationalProviders(providers: ExecutionProvider[]): ExecutionProvider[] {
+  const hasRealRuntime = providers.some((provider) => provider.id !== 'fake' && provider.configured);
+  if (!hasRealRuntime) return providers;
+  return providers.filter((provider) => provider.id !== 'fake');
 }

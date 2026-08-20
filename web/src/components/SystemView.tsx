@@ -8,6 +8,7 @@ import {
 } from '../api/client';
 import { HelpLink } from './HelpLink';
 import type { HelpTopicId } from '../content/help';
+import { filterOperationalProviders } from '../lib/provider-catalog';
 
 export interface SystemViewProps {
   projectsCount: number;
@@ -36,7 +37,8 @@ export function SystemView({
     void api.status().then((r) => setStatus(r)).catch(() => setStatus(null));
   }, []);
 
-  const configured = providers.filter((p) => p.configured);
+  const operationalProviders = filterOperationalProviders(providers);
+  const configured = operationalProviders.filter((p) => p.configured);
   const activeSessions = Object.values(sessionsByObjective).flat().filter((s) => s.status === 'ATTIVA').length;
   const staleSessions = Object.values(sessionsByObjective).flat().filter((s) => s.status === 'STALE' || s.status === 'BLOCCATA').length;
   const queuedSessions = Object.values(sessionsByObjective).flat().filter((s) => s.status === 'IN_AVVIO').length;
@@ -91,7 +93,7 @@ export function SystemView({
 
       <section className="panel">
         <div className="panel-head"><h2>Runtime</h2><HelpLink topic="configurazione" onOpenHelp={onOpenHelp}>Configurazione</HelpLink></div>
-        {providers.map((p) => (
+        {operationalProviders.map((p) => (
           <div className="needs-item" key={p.id}>
             <p className="needs-summary"><strong>{p.runtimeName}</strong></p>
             <p className="muted small">

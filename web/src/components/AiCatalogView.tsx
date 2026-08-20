@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type ProviderCatalogEntry } from '../api/client';
+import { filterOperationalCatalog } from '../lib/provider-catalog';
 import { HelpLink } from './HelpLink';
 import type { HelpTopicId } from '../content/help';
 
@@ -13,7 +14,7 @@ export function AiCatalogView({ onOpenHelp }: { onOpenHelp: (topic: HelpTopicId)
   const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
 
   useEffect(() => {
-    void api.getProviderCatalog().then((r) => setCatalog(r.catalog)).catch(() => setCatalog([]));
+    void api.getProviderCatalog().then((r) => setCatalog(filterOperationalCatalog(r.catalog))).catch(() => setCatalog([]));
   }, []);
 
   return (
