@@ -76,3 +76,23 @@ La decisione completa resta in `ExecutionSelection` (`mode`, `reason`,
 `candidates`, `learningVersion: M18-v1`) e nei metadati dell'`ExecutionAttempt`;
 il provider effettivo è registrato in `provider_name` per consentire lo storico
 per provider/modello e il breakdown di governance.
+
+## Autenticazione runtime e disponibilità modello
+
+La combinazione (runtime, provider, modello) deve essere supportata
+dall'**autenticazione corrente** del runtime: non viene proposta né avviata
+alcuna combinazione non supportata. L'autenticazione corrente della CLI Codex è
+dichiarata dall'operatore con `GAC_CODEX_AUTH` (`api-key` di default, oppure
+`chatgpt` per un account ChatGPT).
+
+- Con `api-key` (default, retro-compatibile) `codex-default` resta proposto come
+  oggi.
+- Con `chatgpt`, l'alias `codex-default` **non è supportato**: `CodexProvider`
+  esclude il modello dal catalogo (modello gestito dal runtime, nessun
+  `modelId`), la validazione rifiuta un `codex-default` esplicito e l'avvio lo
+  blocca. Selezione automatica e UI ereditano l'esclusione dall'unica sorgente
+  del catalogo.
+
+Un modello esplicito configurato con `GAC_CODEX_MODEL` resta rispettato
+(la scelta dell'operatore prevale).
+

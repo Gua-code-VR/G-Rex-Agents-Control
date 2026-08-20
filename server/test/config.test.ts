@@ -35,4 +35,12 @@ describe('config — bind address esplicito (Tailscale/VPN)', () => {
     });
     expect(loadConfig({ GAC_NATIVE_WORKFLOW_ENABLED: 'false' }).nativeWorkflowEnabled).toBe(false);
   });
+  it('espone la modalita di autenticazione corrente della CLI Codex (GAC_CODEX_AUTH), default api-key', () => {
+    expect(loadConfig({}).codexAuth).toBe('api-key');
+    expect(loadConfig({ GAC_CODEX_AUTH: 'chatgpt' }).codexAuth).toBe('chatgpt');
+    expect(loadConfig({ GAC_CODEX_AUTH: 'ChatGPT' }).codexAuth).toBe('chatgpt');
+    expect(loadConfig({ GAC_CODEX_AUTH: 'api-key' }).codexAuth).toBe('api-key');
+    expect(loadConfig({ GAC_CODEX_AUTH: 'sconosciuto' }).codexAuth).toBe('api-key');
+  });
+
 });

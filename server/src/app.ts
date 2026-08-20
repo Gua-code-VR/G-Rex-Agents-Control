@@ -135,7 +135,7 @@ export function buildProviderRegistry(config: AppConfig, pricing: PricingCatalog
   return new ExecutionProviderRegistry([
     new FakeProvider(),
     new ClineProvider(config.clineCommand, config.clineEnabled, () => pricing.list()),
-    new CodexProvider(config.codexCommand, config.codexEnabled, config.codexModel, { inputPerMillion: config.codexInputPricePerMillion, outputPerMillion: config.codexOutputPricePerMillion }),
+    new CodexProvider(config.codexCommand, config.codexEnabled, config.codexModel, { inputPerMillion: config.codexInputPricePerMillion, outputPerMillion: config.codexOutputPricePerMillion }, config.codexAuth),
   ]);
 }
 

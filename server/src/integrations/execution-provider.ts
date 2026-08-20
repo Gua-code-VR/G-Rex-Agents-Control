@@ -564,7 +564,7 @@ export class ClineProvider extends LocalCliProvider {
 /** Codex CLI 0.147 protocol: `codex exec --json [--model] --cd <dir> <prompt>`. */
 export class CodexProvider extends LocalCliProvider {
   readonly descriptor = { id: 'codex', runtimeType: 'cli', runtimeName: 'Codex CLI', providerName: 'OpenAI Codex', defaultModel: null };
-  constructor(command = 'codex', enabled = true, private readonly defaultModel: string | null = null, private readonly pricing: { inputPerMillion: number | null; outputPerMillion: number | null } = { inputPerMillion: null, outputPerMillion: null }) { super(command, enabled); }
+  constructor(command = 'codex', enabled = true, private readonly defaultModel: string | null = null, private readonly pricing: { inputPerMillion: number | null; outputPerMillion: number | null } = { inputPerMillion: null, outputPerMillion: null }, private readonly authMode: 'api-key' | 'chatgpt' = 'api-key') { super(command, enabled); }
   async start(params: StartExecutionParams): Promise<ExecutionHandle> {
     const prompt = [params.objectiveText, params.stopCondition ? `Condizione di stop: ${params.stopCondition}` : null].filter(Boolean).join('\n\n');
     // Codex 0.147: --sandbox <mode> e --approve-for-me sono mutuamente esclusivi
@@ -573,10 +573,30 @@ export class CodexProvider extends LocalCliProvider {
     // non va passato anche --sandbox: sandbox e approvazioni restano preservate.
     const args = ['exec', '--json', '--color', 'never', '--approve-for-me'];
     const model = params.model ?? this.defaultModel;
+    // L'alias `codex-default` non è supportato da un account ChatGPT: blocca
+    // l'avvio della combinazione (difesa in profondità rispetto al catalogo).
+    if (this.authMode === 'chatgpt' && model === 'codex-default') {
+      throw new Error(`Combinazione non supportata dall'autenticazione corrente: modello codex-default non disponibile per Codex CLI autenticato con account ChatGPT`);
+    }
     if (model) args.push('--model', model);
     return this.launch([...args, prompt], params);
   }
-  catalog(): ProviderCatalogEntry[] { const id = this.defaultModel ?? 'codex-default'; return [{ runtime: { id: 'codex', name: 'Codex CLI', type: 'cli', available: this.isConfigured(), defaultModel: id, capabilities: ['workspace-edit', 'streaming', 'json-output', 'team-orchestration'], version: '0.147-compatible' }, provider: { id: 'openai-codex', name: 'OpenAI Codex' }, models: [{ id, name: this.defaultModel ?? 'Modello Codex predefinito', version: null, capabilities: ['code', 'tool-use', 'team-orchestration'], limits: { contextTokens: null, defaultOutputTokens: 4000 }, pricing: { ...this.pricing, currency: 'USD' } }] }]; }
+  catalog(): ProviderCatalogEntry[] {
+    // Un account ChatGPT non espone l'alias `codex-default`. Quando l'operatore
+    // non configura un modello esplicito, il catalogo dichiara quindi il modello
+    // gestito dal runtime (nessun modelId): selezione, validazione e UI lo
+    // escludono automaticamente da questa unica sorgente (§12, autenticazione).
+    const chatgptWithoutExplicitModel = this.authMode === 'chatgpt' && this.defaultModel === null;
+    const id = chatgptWithoutExplicitModel ? null : (this.defaultModel ?? 'codex-default');
+    if (id === null) {
+      return [{
+        runtime: { id: 'codex', name: 'Codex CLI', type: 'cli', available: this.isConfigured(), defaultModel: null, capabilities: ['workspace-edit', 'streaming', 'json-output', 'team-orchestration'], version: '0.147-compatible' },
+        provider: { id: 'openai-codex', name: 'OpenAI Codex' },
+        models: [],
+      }];
+    }
+    return [{ runtime: { id: 'codex', name: 'Codex CLI', type: 'cli', available: this.isConfigured(), defaultModel: id, capabilities: ['workspace-edit', 'streaming', 'json-output', 'team-orchestration'], version: '0.147-compatible' }, provider: { id: 'openai-codex', name: 'OpenAI Codex' }, models: [{ id, name: this.defaultModel ?? 'Modello Codex predefinito', version: null, capabilities: ['code', 'tool-use', 'team-orchestration'], limits: { contextTokens: null, defaultOutputTokens: 4000 }, pricing: { ...this.pricing, currency: 'USD' } }] }];
+  }
 }
 
 export class FakeProvider implements ExecutionProvider {

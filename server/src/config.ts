@@ -52,6 +52,10 @@ export interface AppConfig {
   codexCommand: string;
   codexEnabled: boolean;
   codexModel: string | null;
+  /** Autenticazione corrente della CLI Codex: `api-key` o `chatgpt` (GAC_CODEX_AUTH).
+   *  Determina quali modelli sono realmente supportati: un account ChatGPT non
+   *  espone l'alias `codex-default`, che quindi non viene proposto né avviato. */
+  codexAuth: 'api-key' | 'chatgpt';
   codexInputPricePerMillion: number | null;
   codexOutputPricePerMillion: number | null;
   executionRetryMax: number;
@@ -110,6 +114,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const codexCommand = env.GAC_CODEX_COMMAND?.trim() || 'codex';
   const codexEnabled = env.GAC_CODEX_ENABLED !== 'false';
   const codexModel = env.GAC_CODEX_MODEL?.trim() || null;
+  // Autenticazione corrente della CLI Codex. Default `api-key` (retro-compatibile:
+  // `codex-default` resta proposto come oggi); `chatgpt` esclude l'alias.
+  const rawCodexAuth = env.GAC_CODEX_AUTH?.trim().toLowerCase();
+  const codexAuth: 'api-key' | 'chatgpt' = rawCodexAuth === 'chatgpt' ? 'chatgpt' : 'api-key';
   const codexInputPricePerMillion = nonNegativeNumber(env.GAC_CODEX_INPUT_PRICE_PER_MILLION);
   const codexOutputPricePerMillion = nonNegativeNumber(env.GAC_CODEX_OUTPUT_PRICE_PER_MILLION);
   // M18: file prezzi dichiarati (provider diretti), riletto periodicamente.
@@ -171,6 +179,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     codexCommand,
     codexEnabled,
     codexModel,
+    codexAuth,
     codexInputPricePerMillion,
     codexOutputPricePerMillion,
     pricingFile,

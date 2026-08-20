@@ -73,4 +73,17 @@ describe('execution-selection — selezione Runtime/Provider/Modello', () => {
   it('selectionValue normalizza la combinazione con modello vuoto', () => {
     expect(selectionValue({ runtimeId: 'a', providerId: 'b', modelId: '' })).toBe('a|b|');
   });
+  it('Codex con account ChatGPT (catalogo senza codex-default) propone solo il modello gestito dal runtime', () => {
+    const catalog = [
+      entry({ runtimeId: 'codex', runtimeName: 'Codex CLI', providerId: 'openai-codex', providerName: 'OpenAI Codex', modelIds: [] }),
+    ];
+    const options = buildSelectionOptions(catalog);
+    expect(options).toHaveLength(1);
+    expect(options[0].modelId).toBe('');
+    expect(options[0].modelName).toBeNull();
+    expect(options[0].label).toContain('modello gestito dal runtime');
+    expect(options[0].label).not.toContain('codex-default');
+    expect(options.some((o) => o.modelId === 'codex-default')).toBe(false);
+  });
+
 });
