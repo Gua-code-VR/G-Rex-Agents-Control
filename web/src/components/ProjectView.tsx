@@ -12,6 +12,8 @@ import {
   type Project,
 } from '../api/client';
 import { GROUP_LABEL, OBJECTIVE_STATUS_LABEL, PROJECT_STATUS_LABEL as STATUS_LABEL, SESSION_STATUS_LABEL } from '../lib/labels';
+import { HelpLink } from './HelpLink';
+import type { HelpTopicId } from '../content/help';
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('it-IT');
@@ -72,6 +74,7 @@ export interface ProjectViewProps {
   onDecide: (checkpointId: string, decisionType: DecisionType, note?: string) => void;
   deciding?: string | null;
   onNavigateObjectives: (projectId: string) => void;
+  onOpenHelp: (topic: HelpTopicId) => void;
 }
 
 /**
@@ -92,6 +95,7 @@ export function ProjectView({
   onDecide,
   deciding,
   onNavigateObjectives,
+  onOpenHelp,
 }: ProjectViewProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState('');
@@ -176,7 +180,7 @@ export function ProjectView({
     return (
       <div className="project-view">
         <section className="panel">
-          <div className="panel-head"><h2>Progetti</h2></div>
+          <div className="panel-head"><h2>Progetti</h2><HelpLink topic="primo-avvio" onOpenHelp={onOpenHelp}>Primo avvio</HelpLink></div>
           <p className="muted">Nessun progetto registrato. Creane uno per iniziare.</p>
           <button type="button" className="btn btn-primary touch-target" onClick={() => setShowCreate(true)}>Nuovo progetto</button>
         </section>
@@ -186,6 +190,7 @@ export function ProjectView({
             onName={setName} onRepo={setRepositoryPath} onObjective={setCurrentObjective}
             onSubmit={handleCreate} submitting={submitting} formError={formError}
             onCancel={() => setShowCreate(false)}
+            onOpenHelp={onOpenHelp}
           />
         )}
       </div>
@@ -197,9 +202,12 @@ export function ProjectView({
       <section className="panel project-selector">
         <div className="panel-head">
           <h2>Progetti</h2>
-          <button type="button" className="btn btn-ghost" onClick={() => setShowCreate((v) => !v)}>
-            {showCreate ? 'Chiudi' : 'Nuovo progetto'}
-          </button>
+          <div className="panel-actions">
+            <HelpLink topic="progetti" onOpenHelp={onOpenHelp}>Come funzionano</HelpLink>
+            <button type="button" className="btn btn-ghost" onClick={() => setShowCreate((v) => !v)}>
+              {showCreate ? 'Chiudi' : 'Nuovo progetto'}
+            </button>
+          </div>
         </div>
         <div className="project-picker">
           {projects.map((p) => (
@@ -222,6 +230,7 @@ export function ProjectView({
           onName={setName} onRepo={setRepositoryPath} onObjective={setCurrentObjective}
           onSubmit={handleCreate} submitting={submitting} formError={formError}
           onCancel={() => setShowCreate(false)}
+          onOpenHelp={onOpenHelp}
         />
       )}
 
@@ -253,7 +262,7 @@ export function ProjectView({
               </section>
 
               <section className="panel">
-                <div className="panel-head"><h2>Costi e budget</h2></div>
+                <div className="panel-head"><h2>Costi e budget</h2><HelpLink topic="costi-budget" onOpenHelp={onOpenHelp}>Budget</HelpLink></div>
                 {governance ? (
                   <>
                     <p className="muted small">
@@ -432,15 +441,17 @@ export function ProjectView({
 function CreateProjectForm({
   name, repositoryPath, currentObjective,
   onName, onRepo, onObjective, onSubmit, submitting, formError, onCancel,
+  onOpenHelp,
 }: {
   name: string; repositoryPath: string; currentObjective: string;
   onName: (v: string) => void; onRepo: (v: string) => void; onObjective: (v: string) => void;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void; submitting: boolean; formError: string | null;
   onCancel: () => void;
+  onOpenHelp: (topic: HelpTopicId) => void;
 }) {
   return (
     <section className="panel create-project-panel">
-      <div className="panel-head"><h2>Nuovo progetto</h2></div>
+      <div className="panel-head"><h2>Nuovo progetto</h2><HelpLink topic="progetti" onOpenHelp={onOpenHelp}>Guida progetti</HelpLink></div>
       <form onSubmit={onSubmit} className="create-project-form">
         <label className="field">Nome * <input value={name} onChange={(e) => onName(e.target.value)} placeholder="Nome del progetto" maxLength={200} disabled={submitting} /></label>
         <label className="field">Repository <input value={repositoryPath} onChange={(e) => onRepo(e.target.value)} placeholder="/percorso/al/repository" maxLength={2000} disabled={submitting} /></label>

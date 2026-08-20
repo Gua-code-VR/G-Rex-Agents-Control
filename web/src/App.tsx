@@ -27,6 +27,8 @@ import { LoginPage } from './components/LoginPage';
 import type { NavSection } from './components/Sidebar';
 import { SettingsPage } from './components/SettingsPage';
 import { ActivityMonitorView } from './components/ActivityMonitorView';
+import { HelpView } from './components/HelpView';
+import type { HelpTopicId } from './content/help';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -64,6 +66,7 @@ export default function App() {
   const [actionError, setActionError] = useState<string | null>(null);
   // Navigation (§4 CONTROL_ROOM_SPEC.md)
   const [activeTab, setActiveTab] = useState<NavSection>('control-room');
+  const [helpTopic, setHelpTopic] = useState<HelpTopicId>('primo-avvio');
   // Spesa rilevata (Fase 2): alimentata dalla Control Room per l'header.
   const [costToday, setCostToday] = useState<number | null>(null);
   const [gitBusy, setGitBusy] = useState<Record<string, boolean>>({});
@@ -185,6 +188,7 @@ export default function App() {
   const handleFail = (oId: string, detail?: string) => runObjAction(oId, () => api.failObjective(oId, detail));
   const handleCancel = (oId: string) => runObjAction(oId, () => api.cancelObjective(oId));
   const handleRetry = (oId: string, selection?: { runtimeId: string; providerId?: string; modelId?: string | null }) => runObjAction(oId, () => api.retryObjective(oId, selection));
+  const openHelp = (topic: HelpTopicId) => { setHelpTopic(topic); setActiveTab('help'); };
   const markNotificationsRead = async () => { await api.markAllNotificationsRead(); setNotifications([]); };
   const handleCreateObj = async (input: CreateObjectiveInput) => {
     setCreatingObjective(true); setActionError(null);
@@ -244,6 +248,7 @@ export default function App() {
               onSelectProject={(id) => { setSelectedProjectId(id); setActiveTab('projects'); }}
               onDecide={handleDecide}
               deciding={decidingCheckpoint}
+              onOpenHelp={openHelp}
             />
           </div>)}
 
@@ -262,6 +267,7 @@ export default function App() {
               onDecide={handleDecide}
               deciding={decidingCheckpoint}
               onNavigateObjectives={(id) => { setSelectedProjectId(id); setActiveTab('objectives'); }}
+              onOpenHelp={openHelp}
             />
           </div>)}
 
@@ -274,7 +280,8 @@ export default function App() {
               onStart={handleStart} onStop={handleStop} onComplete={handleComplete}
               onBlock={handleBlock} onFail={handleFail} onCancel={handleCancel}
               onRetry={handleRetry}
-              onDecide={handleDecide} deciding={decidingCheckpoint} providers={providers} />
+              onDecide={handleDecide} deciding={decidingCheckpoint} providers={providers}
+              onOpenHelp={openHelp} />
           </div>)}
 
           {/* EXECUTIONS (§4: Esecuzioni — vista dedicata in Fase 5) */}
@@ -291,7 +298,7 @@ export default function App() {
           </div>)}
 
           {activeTab === 'activity-monitor' && (<div className="tab-content activity-monitor-tab">
-            <ActivityMonitorView projects={projects} objectivesByProject={objectivesByProject} sessionsByObjective={sessionsByObjective} />
+            <ActivityMonitorView projects={projects} objectivesByProject={objectivesByProject} sessionsByObjective={sessionsByObjective} onOpenHelp={openHelp} />
           </div>)}
 
           {/* REQUIRES YOU (§4: Richiede te — vista dedicata in Fase 6) */}
@@ -305,6 +312,7 @@ export default function App() {
               onRetry={handleRetry}
               deciding={decidingCheckpoint}
               busy={objectiveBusy}
+              onOpenHelp={openHelp}
             />
           </div>)}
 
@@ -315,7 +323,7 @@ export default function App() {
 
           {/* AI CATALOG (§4: nav secondaria — vista dedicata in Fase 9) */}
           {activeTab === 'ai-catalog' && (<div className="tab-content ai-catalog-tab">
-            <AiCatalogView />
+            <AiCatalogView onOpenHelp={openHelp} />
           </div>)}
 
 
@@ -325,6 +333,7 @@ export default function App() {
               projectsCount={projects.length}
               sessionsByObjective={sessionsByObjective}
               providers={providers}
+              onOpenHelp={openHelp}
             />
           </div>)}
 
@@ -376,6 +385,9 @@ export default function App() {
           {/* SETTINGS TAB */}
           {activeTab === 'settings' && (<div className="tab-content">
             <SettingsPage onLogout={() => setAuthenticated(false)} version="0.4.0" />
+          </div>)}
+          {activeTab === 'help' && (<div className="tab-content help-tab">
+            <HelpView activeTopic={helpTopic} onTopicVisible={setHelpTopic} />
           </div>)}
           <footer className="footer">
             <p>Solo rete locale / VPN Tailscale · nessun servizio esterno · SQLite <code>data/gac.sqlite</code></p>

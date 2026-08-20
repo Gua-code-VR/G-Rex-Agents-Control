@@ -11,6 +11,7 @@ export type NavSection =
   | 'ai-catalog' 
   | 'events-audit' 
   | 'system' 
+  | 'help'
   | 'settings';
 
 interface SidebarProps {
@@ -39,6 +40,7 @@ const SECONDARY_NAV: Array<{ key: NavSection; icon: string; label: string }> = [
   { key: 'ai-catalog', icon: '🤖', label: 'AI Catalog' },
   { key: 'events-audit', icon: '📜', label: 'Eventi / Audit' },
   { key: 'system', icon: '🖥️', label: 'Sistema' },
+  { key: 'help', icon: '?', label: 'Help' },
   { key: 'settings', icon: '⚙️', label: 'Impostazioni' },
 ];
 

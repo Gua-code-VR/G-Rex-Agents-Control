@@ -97,7 +97,6 @@ export interface ObjectiveRepository {
   create(projectId: string, input: CreateObjectiveInput): Objective;
   getById(id: string): Objective | null;
   listByProject(projectId: string): Objective[];
-  getActiveByProject(projectId: string): Objective | null;
   setStatus(id: string, status: ObjectiveStatus): Objective | null;
   setGitStart(id: string, gitStart: GitStatus | null): Objective | null;
   markActive(id: string, status: ObjectiveStatus, startedAt: string): Objective | null;
@@ -154,7 +153,6 @@ export class SqliteObjectiveRepository implements ObjectiveRepository {
   private readonly insertStmt: StatementSync;
   private readonly getStmt: StatementSync;
   private readonly listByProjectStmt: StatementSync;
-  private readonly getActiveStmt: StatementSync;
   private readonly setStatusStmt: StatementSync;
   private readonly setGitStartStmt: StatementSync;
   private readonly markActiveStmt: StatementSync;
@@ -175,11 +173,6 @@ export class SqliteObjectiveRepository implements ObjectiveRepository {
     this.getStmt = db.prepare('SELECT * FROM objectives WHERE id = ?');
     this.listByProjectStmt = db.prepare(
       'SELECT * FROM objectives WHERE project_id = ? ORDER BY created_at DESC',
-    );
-    this.getActiveStmt = db.prepare(
-      `SELECT * FROM objectives
-       WHERE project_id = ? AND status IN ('IN_AVVIO','IN_LAVORAZIONE','RICHIEDE_ATTENZIONE','BLOCCATO')
-       ORDER BY created_at DESC LIMIT 1`,
     );
     this.setStatusStmt = db.prepare(
       'UPDATE objectives SET status = ?, updated_at = ? WHERE id = ?',
@@ -232,11 +225,6 @@ create(projectId: string, input: CreateObjectiveInput): Objective {
 
   listByProject(projectId: string): Objective[] {
     return (this.listByProjectStmt.all(projectId) as unknown as ObjectiveRow[]).map(toObjective);
-  }
-
-  getActiveByProject(projectId: string): Objective | null {
-    const row = this.getActiveStmt.get(projectId) as ObjectiveRow | undefined;
-    return row ? toObjective(row) : null;
   }
 
   setStatus(id: string, status: ObjectiveStatus): Objective | null {

@@ -9,10 +9,10 @@ import { loadConfig } from '../src/config.js';
 /**
  * M3 — Obiettivi e sessioni agente (§12): ciclo obiettivo → sessione
  * agente → stato operativo, senza dipendere dalla UI di VS Code.
- * Verifica creazione con sessione iniziale, invariante «un solo obiettivo
- * attivo» (§14), avvio/stop/completamento, annullamento, eventi e
- * persistenza al riavvio. L'adapter agente è il fake (§8): nessun
- * processo esterno.
+ * Verifica creazione con sessione iniziale, più obiettivi attivi nello stesso
+ * progetto gestiti dalla coda, avvio/stop/completamento, annullamento, eventi
+ * e persistenza al riavvio. L'adapter agente è il fake (§8): nessun processo
+ * esterno.
  */
 
 let hasGit = true;
@@ -43,7 +43,13 @@ describe('M3 - obiettivi e sessioni agente', () => {
 
   beforeAll(async () => {
     built = await buildApp(
-      loadConfig({ GAC_DATA_DIR: dataDir, GAC_LOG_LEVEL: 'silent', GAC_AGENT_MODE: 'fake' }),
+      loadConfig({
+        GAC_DATA_DIR: dataDir,
+        GAC_LOG_LEVEL: 'silent',
+        GAC_AGENT_MODE: 'fake',
+        GAC_CLINE_ENABLED: 'false',
+        GAC_CODEX_ENABLED: 'false',
+      }),
     );
     const res = await built.app.inject({
       method: 'POST',
@@ -65,7 +71,7 @@ describe('M3 - obiettivi e sessioni agente', () => {
       payload: {
         title: 'Completare la fondazione M3',
         objectiveText: 'Implementare obiettivi e sessioni agente secondo il §5.',
-        invariants: ['Un solo obiettivo attivo per progetto'],
+        invariants: ['Workspace isolato quando il progetto ha repository Git'],
         acceptanceCriteria: ['I test passano', 'La dashboard mostra le sessioni'],
         stopCondition: 'Quando la prima demo è pronta',
       },
@@ -76,7 +82,7 @@ describe('M3 - obiettivi e sessioni agente', () => {
     expect(objective.projectId).toBe(projectId);
     // Worker fake disponibile: la coda di esecuzione avvia subito l'obiettivo.
     expect(objective.status).toBe('IN_LAVORAZIONE');
-    expect(objective.invariants).toEqual(['Un solo obiettivo attivo per progetto']);
+    expect(objective.invariants).toEqual(['Workspace isolato quando il progetto ha repository Git']);
     expect(objective.acceptanceCriteria).toHaveLength(2);
     expect(objective.stopCondition).toBe('Quando la prima demo è pronta');
     expect(session.objectiveId).toBe(objective.id);
@@ -96,14 +102,36 @@ describe('M3 - obiettivi e sessioni agente', () => {
     expect(started.json().session.status).toBe('ATTIVA');
   });
 
-  it('rispetta l’invariante §14: un solo obiettivo attivo per progetto (409)', async () => {
+  it('consente un secondo obiettivo attivo nello stesso progetto e lo lascia alla coda se gli slot sono occupati', async () => {
+    const project = await built.app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      payload: { name: 'm3-paralleli' },
+    });
+    expect(project.statusCode).toBe(201);
+    const parallelProjectId = project.json().project.id as string;
+
+    const first = await built.app.inject({
+      method: 'POST',
+      url: `/api/projects/${parallelProjectId}/objectives`,
+      payload: { title: 'Primo parallelo', objectiveText: 'Occupa lo slot fake.' },
+    });
+    expect(first.statusCode).toBe(201);
+    expect(first.json().objective.status).toBe('IN_AVVIO');
+    expect(first.json().session.status).toBe('IN_AVVIO');
+
     const res = await built.app.inject({
       method: 'POST',
-      url: `/api/projects/${projectId}/objectives`,
-      payload: { title: 'Secondo obiettivo', objectiveText: 'Non dovrebbe partire.' },
+      url: `/api/projects/${parallelProjectId}/objectives`,
+      payload: { title: 'Secondo obiettivo', objectiveText: 'Deve essere accettato e accodato.' },
     });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().message).toContain('attivo');
+    expect(res.statusCode).toBe(201);
+    expect(res.json().autoStart).toEqual({ started: false });
+    expect(res.json().objective.status).toBe('IN_AVVIO');
+    expect(res.json().session.status).toBe('IN_AVVIO');
+
+    const objectives = built.services.objectives.listByProject(parallelProjectId);
+    expect(objectives.filter((objective) => objective.status === 'IN_AVVIO' || objective.status === 'IN_LAVORAZIONE')).toHaveLength(2);
   });
 
   it('rifiuta un obiettivo senza titolo o testo (400)', async () => {

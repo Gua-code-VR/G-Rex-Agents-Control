@@ -15,6 +15,8 @@ import {
 } from '../api/client';
 import { computeRequiresYou } from '../lib/requires-you';
 import { GROUP_LABEL, OBJECTIVE_STATUS_LABEL, SESSION_STATUS_LABEL } from '../lib/labels';
+import { HelpLink } from './HelpLink';
+import type { HelpTopicId } from '../content/help';
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('it-IT');
@@ -39,6 +41,7 @@ export interface ControlRoomProps {
   onSelectProject: (projectId: string) => void;
   onDecide: (checkpointId: string, decisionType: DecisionType, note?: string) => void;
   deciding?: string | null;
+  onOpenHelp: (topic: HelpTopicId) => void;
 }
 
 
@@ -57,6 +60,7 @@ export function ControlRoom({
   onSelectProject,
   onDecide,
   deciding,
+  onOpenHelp,
 }: ControlRoomProps) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [approvals, setApprovals] = useState<GovernanceApproval[]>([]);
@@ -187,7 +191,10 @@ export function ControlRoom({
           <section className="panel work-in-progress">
             <div className="panel-head">
               <h2>Lavoro in corso</h2>
-              <span className="muted small">{activeSessions.length} sessione/i attive</span>
+              <div className="panel-actions">
+                <HelpLink topic="primo-avvio" onOpenHelp={onOpenHelp}>Primo avvio</HelpLink>
+                <span className="muted small">{activeSessions.length} sessione/i attive</span>
+              </div>
             </div>
             {activeSessions.length === 0 ? (
               <p className="muted">Nessuna sessione agente attiva. Crea un obiettivo per iniziare.</p>

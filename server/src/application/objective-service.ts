@@ -15,9 +15,6 @@ import type { ExecutionProviderRegistry } from '../integrations/execution-provid
 export const EVENT_OBJECTIVE_CREATED = 'objective.created';
 export const EVENT_OBJECTIVE_CANCELLED = 'objective.cancelled';
 
-/** Violazione dell'invariante §14: esiste già un obiettivo attivo. */
-export class ObjectiveConflictError extends Error {}
-
 /** Lo stato corrente non consente l'operazione richiesta. */
 export class ObjectiveStateError extends Error {}
 
@@ -28,10 +25,10 @@ export interface CreatedObjective {
 }
 
 /**
- * Gestione degli Objective (§5 e §14): creazione con sessione iniziale,
- * lettura, lista per progetto e annullamento. La creazione verifica
- * l'invariante «un solo obiettivo attivo per progetto» e cattura lo
- * snapshot Git di inizio lavoro come evidenza (§6-SYSTEM).
+ * Gestione degli Objective (§5): creazione con sessione iniziale, lettura,
+ * lista per progetto e annullamento. La creazione cattura lo snapshot Git di
+ * inizio lavoro come evidenza (§6-SYSTEM); coda e limiti di concorrenza
+ * decidono quando l'obiettivo può partire.
  */
 export class ObjectiveService {
   constructor(
@@ -50,20 +47,12 @@ export class ObjectiveService {
   /**
    * Crea un Objective IN_AVVIO e la sua sessione agente iniziale IN_AVVIO.
    * Aggiorna l'obiettivo corrente del progetto e lo stato ufficiale.
-   * Fallisce con ObjectiveConflictError se esiste già un obiettivo attivo
-   * (§14: nessun nuovo obiettivo finché il precedente non è chiuso).
    */
   async create(projectId: string, input: unknown): Promise<CreatedObjective> {
     const parsed = createObjectiveSchema.parse(input) as CreateObjectiveInput;
     const project = this.projects.getById(projectId);
     if (!project) {
       throw new ObjectiveStateError('Progetto non trovato');
-    }
-    const active = this.objectives.getActiveByProject(projectId);
-    if (active) {
-      throw new ObjectiveConflictError(
-        `Esiste già un obiettivo attivo («${active.title}»). Chiudilo prima di crearne uno nuovo.`,
-      );
     }
 
     let selection;

@@ -16,6 +16,8 @@ import {
 import { CheckpointList } from './CheckpointList';
 import { catalogEntriesFor, defaultModelId, modelsForProvider, providersForRuntime } from '../lib/provider-catalog';
 import { OBJECTIVE_STATUS_LABEL, SESSION_STATUS_LABEL } from '../lib/labels';
+import { HelpLink, InlineHelp } from './HelpLink';
+import type { HelpTopicId } from '../content/help';
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('it-IT');
@@ -65,6 +67,7 @@ export interface ObjectiveViewProps {
   onDecide: (cId: string, dt: DecisionType, note?: string) => void;
   deciding?: string | null;
   providers: ExecutionProvider[];
+  onOpenHelp: (topic: HelpTopicId) => void;
 }
 
 /**
@@ -93,6 +96,7 @@ export function ObjectiveView({
   onDecide,
   deciding,
   providers,
+  onOpenHelp,
 }: ObjectiveViewProps) {
   const selected = projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null;
   const objectives = selected ? objectivesByProject[selected.id] ?? [] : [];
@@ -100,7 +104,7 @@ export function ObjectiveView({
   return (
     <div className="objective-view">
       <section className="panel objective-project-select">
-        <div className="panel-head"><h2>Obiettivi</h2></div>
+        <div className="panel-head"><h2>Obiettivi</h2><HelpLink topic="obiettivi" onOpenHelp={onOpenHelp}>Guida obiettivi</HelpLink></div>
         <div className="project-picker">
           {projects.map((p) => (
             <button
@@ -121,6 +125,7 @@ export function ObjectiveView({
           providers={providers}
           creating={creating}
           onCreate={onCreate}
+          onOpenHelp={onOpenHelp}
         />
       )}
 
@@ -151,10 +156,11 @@ export function ObjectiveView({
 
 
 function CreateObjectiveForm({
-  selected, providers, creating, onCreate,
+  selected, providers, creating, onCreate, onOpenHelp,
 }: {
   selected: Project; providers: ExecutionProvider[]; creating: boolean;
   onCreate: (input: CreateObjectiveInput) => Promise<void>;
+  onOpenHelp: (topic: HelpTopicId) => void;
 }) {
   const [title, setTitle] = useState('');
   const [objectiveText, setObjectiveText] = useState('');
@@ -219,13 +225,13 @@ function CreateObjectiveForm({
 
   return (
     <form onSubmit={handleSubmit} className="panel create-objective-form">
-      <div className="panel-head"><h2>Nuovo obiettivo — {selected.name}</h2></div>
+      <div className="panel-head"><h2>Nuovo obiettivo — {selected.name}</h2><HelpLink topic="obiettivi" onOpenHelp={onOpenHelp}>Scrivere un obiettivo</HelpLink></div>
 
       <label className="field objective-text-field">Titolo <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Titolo breve (opzionale)" maxLength={200} disabled={creating} /></label>
       <label className="field objective-desc-field">Cosa deve essere raggiunto? * <textarea value={objectiveText} onChange={(e) => setObjectiveText(e.target.value)} rows={3} maxLength={50000} placeholder="Descrizione in linguaggio naturale" disabled={creating} /></label>
 
       <fieldset className="execution-mode">
-        <legend>Esecuzione</legend>
+        <legend>Esecuzione <HelpLink topic="runtime-provider-modello" onOpenHelp={onOpenHelp}>Runtime/provider/modello</HelpLink></legend>
         <label className="radio-option">
           <input type="radio" name="execution-mode" checked={mode === 'automatic'} onChange={() => setMode('automatic')} />
           <span><strong>Automatica (consigliata)</strong><span className="muted small"> G-Rex sceglie runtime/provider/modello.</span></span>
@@ -238,6 +244,7 @@ function CreateObjectiveForm({
 
       {mode === 'manual' && (
         <div className="runtime-selection objective-runtime-selection">
+          <InlineHelp topic="runtime-provider-modello" onOpenHelp={onOpenHelp}>La scelta manuale vincola il motore usato dall’obiettivo.</InlineHelp>
           <label className="field">Runtime
             <select value={runtime} onChange={(e) => setRuntime(e.target.value)} disabled={creating}>
               <option value="">Seleziona runtime</option>
@@ -271,6 +278,7 @@ function CreateObjectiveForm({
           <label className="field">Invarianti <textarea value={invariants} onChange={(e) => setInvariants(e.target.value)} rows={2} maxLength={5000} placeholder="Uno per riga" disabled={creating} /></label>
           <label className="field">Criteri di accettazione <textarea value={acceptanceCriteria} onChange={(e) => setAcceptanceCriteria(e.target.value)} rows={2} maxLength={5000} placeholder="Uno per riga" disabled={creating} /></label>
           <label className="field">Stima costo affidabile (€) <input type="number" min="0" step="0.001" value={estimatedCost} onChange={(e) => setEstimatedCost(e.target.value)} placeholder="Opzionale: enforcement preventivo" disabled={creating} /></label>
+          <InlineHelp topic="costi-budget" onOpenHelp={onOpenHelp}>Usa la stima quando vuoi un controllo preventivo sul budget.</InlineHelp>
         </div>
       )}
 

@@ -6,11 +6,14 @@ import {
   type HealthResponse,
   type StatusResponse,
 } from '../api/client';
+import { HelpLink } from './HelpLink';
+import type { HelpTopicId } from '../content/help';
 
 export interface SystemViewProps {
   projectsCount: number;
   sessionsByObjective: Record<string, AgentSession[]>;
   providers: ExecutionProvider[];
+  onOpenHelp: (topic: HelpTopicId) => void;
 }
 
 /**
@@ -22,6 +25,7 @@ export function SystemView({
   projectsCount,
   sessionsByObjective,
   providers,
+  onOpenHelp,
 }: SystemViewProps) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -57,6 +61,7 @@ export function SystemView({
       <section className="panel">
         <div className="panel-head">
           <h2>Stato di readiness</h2>
+          <HelpLink topic="primo-avvio" onOpenHelp={onOpenHelp}>Primo avvio</HelpLink>
         </div>
         <p className={`readiness-state readiness-${ready ? 'ok' : controlPlaneOk ? 'limited' : 'down'}`}>
           {readiness}
@@ -85,7 +90,7 @@ export function SystemView({
       </section>
 
       <section className="panel">
-        <div className="panel-head"><h2>Runtime</h2></div>
+        <div className="panel-head"><h2>Runtime</h2><HelpLink topic="configurazione" onOpenHelp={onOpenHelp}>Configurazione</HelpLink></div>
         {providers.map((p) => (
           <div className="needs-item" key={p.id}>
             <p className="needs-summary"><strong>{p.runtimeName}</strong></p>

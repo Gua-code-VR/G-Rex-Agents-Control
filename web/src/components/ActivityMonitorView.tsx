@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, type AgentSession, type EventRecord, type ExecutionAttempt, type Objective, type Project } from '../api/client';
 import { summarizeEventPayload } from '../lib/event-summary';
 import { OBJECTIVE_STATUS_LABEL, SESSION_STATUS_LABEL } from '../lib/labels';
+import { HelpLink } from './HelpLink';
+import type { HelpTopicId } from '../content/help';
 
 interface Props {
   projects: Project[];
   objectivesByProject: Record<string, Objective[]>;
   sessionsByObjective: Record<string, AgentSession[]>;
+  onOpenHelp: (topic: HelpTopicId) => void;
 }
 
 type Worker = { id: string; task: string | null; events: EventRecord[] };
@@ -249,7 +252,7 @@ function timeLabel(value: string | null) {
   return value ? new Date(value).toLocaleTimeString('it-IT') : '—';
 }
 
-export function ActivityMonitorView({ projects, objectivesByProject, sessionsByObjective }: Props) {
+export function ActivityMonitorView({ projects, objectivesByProject, sessionsByObjective, onOpenHelp }: Props) {
   const objectives = useMemo(
     () => Object.values(objectivesByProject).flat().sort((a, b) => Number(live(b)) - Number(live(a)) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
     [objectivesByProject],
@@ -329,6 +332,7 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
           <p className="eyebrow">Monitor attività</p>
           <h1>Segui un obiettivo</h1>
           <p className="muted">Aggiornamento automatico ogni 5 secondi · solo eventi e stato già persistiti.</p>
+          <HelpLink topic="monitor-attivita" onOpenHelp={onOpenHelp}>Leggi il Monitor</HelpLink>
         </div>
         <label className="select-label">
           Obiettivo
@@ -356,9 +360,12 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
                 <h2>Timeline worker/run</h2>
                 <p className="muted small">Ricostruita dai payload persistiti `team_run_task`, `team_await_runs` e `team_list_runs`.</p>
               </div>
-              <span className={concurrency.peak > 1 ? 'parallel-badge' : 'muted small'}>
-                Attivi ora {concurrency.currentlyActive} · Picco {concurrency.peak}{nativeWorkflow ? ` · Limite ${nativeWorkflow.maxWorkers}` : ''}
-              </span>
+              <div className="panel-actions">
+                {nativeWorkflow && <HelpLink topic="native-workflow" onOpenHelp={onOpenHelp}>Workflow nativo</HelpLink>}
+                <span className={concurrency.peak > 1 ? 'parallel-badge' : 'muted small'}>
+                  Attivi ora {concurrency.currentlyActive} · Picco {concurrency.peak}{nativeWorkflow ? ` · Limite ${nativeWorkflow.maxWorkers}` : ''}
+                </span>
+              </div>
             </div>
             {teamRuns.length === 0 || !bounds ? (
               <p className="muted">Nessun run team ricostruibile dagli eventi persistiti dell’obiettivo selezionato.</p>
@@ -453,7 +460,7 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
 
             <aside className="monitor-side">
               <section className="panel">
-                <div className="panel-head"><h2>Tentativi e recovery</h2></div>
+                <div className="panel-head"><h2>Tentativi e recovery</h2><HelpLink topic="retry-fallback" onOpenHelp={onOpenHelp}>Retry/fallback</HelpLink></div>
                 <ol className="attempt-list">
                   {orderedAttempts.map((attempt) => (
                     <li key={attempt.id}>

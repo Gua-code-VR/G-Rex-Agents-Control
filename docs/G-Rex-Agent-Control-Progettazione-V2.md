@@ -200,6 +200,12 @@ obiettivi/sessioni, non impostato manualmente dalla UI.
 Un progetto senza lavoro attivo è disponibile per un nuovo obiettivo
 (`FERMO` o equivalente operativo).
 
+Un progetto può avere più Objective attivi o in coda contemporaneamente. La
+creazione di un nuovo Objective non è bloccata dalla presenza di altri Objective
+aperti nello stesso Project: coda di esecuzione, limiti di concorrenza,
+workspace Git isolate e protezioni contro conflitti/working tree sporca
+governano quando e dove il lavoro può partire.
+
 Il completamento di un obiettivo non deve rendere inutilizzabile il
 progetto né obbligare a ricrearlo.
 
@@ -934,3 +940,19 @@ isolate in workspace Git, la telemetria dei worker e dei run del runtime, la
 timeline del Monitor attivitÃ , il routing e il recovery con retry/fallback.
 Tali capacitÃ  continuano a essere governate dal Control Plane e dal
 `ProcessSupervisor` secondo le sezioni precedenti.
+
+### 25.2 Help integrato
+
+Agent Control include un Help integrato accessibile dalla navigazione principale
+e collegato contestualmente dalle schermate piÃ¹ complesse.
+
+L'Help deve restare orientato all'operatore, non tecnico, e spiegare almeno:
+primo avvio, progetti, obiettivi, runtime/provider/modello, `Richiede te`,
+Monitor attivitÃ , retry/fallback, costi/budget, native workflow multi-worker,
+errori comuni e configurazione.
+
+I contenuti dell'Help devono avere una sola fonte mantenibile. Le viste possono
+linkare argomenti specifici, ma non devono duplicare regole di prodotto,
+configurazione o logica applicativa. In caso di dubbio, la fonte autorevole per
+il comportamento resta questo documento e lo stato runtime resta quello
+persistito da Agent Control.

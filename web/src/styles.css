@@ -1631,5 +1631,46 @@ select {
 @media (min-width: 1024px) { .monitor-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }.monitor-grid { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); } }
 @media (max-width: 639px) { .monitor-event { grid-template-columns: 1fr; gap: 4px; }.monitor-event time { order: 2; }.worker-timeline-scale { margin-left: 0; }.worker-timeline-row { grid-template-columns: 1fr; gap: 5px; }.worker-timeline-status { text-align: right; } }
 
+/* Help integrato: contenuti statici, link contestuali e layout coerente. */
+.panel-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.help-link {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--accent); border-radius: 999px; padding: 4px 9px;
+  font-size: .76rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.help-link:hover { background: #1a2a4a; border-color: #2a4a7a; }
+.help-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.help-link span:first-child {
+  display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px;
+  border-radius: 999px; background: rgba(96, 165, 250, .16); color: var(--accent);
+}
+.help-link-chip { color: #dbeafe; }
+.inline-help {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0; color: var(--muted); font-size: .82rem;
+}
+.help-view { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.help-hero h1 { margin: 2px 0; font-size: 1.35rem; }
+.help-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.help-index { display: flex; flex-direction: column; gap: 8px; }
+.help-index h2 { margin: 0 0 4px; font-size: 1rem; }
+.help-topic-button {
+  width: 100%; text-align: left; display: flex; flex-direction: column; gap: 3px;
+  padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2);
+  color: var(--text); cursor: pointer;
+}
+.help-topic-button:hover, .help-topic-button.active { border-color: #2a4a7a; background: #1a2a4a; }
+.help-topic-button span { color: var(--muted); font-size: .78rem; line-height: 1.35; }
+.help-topics { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.help-topic { scroll-margin-top: 84px; }
+.help-topic h2 { margin: 2px 0 4px; font-size: 1.1rem; }
+.help-topic ul { margin: 12px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; color: var(--text); }
+.help-topic li { line-height: 1.45; }
+
+@media (min-width: 1024px) {
+  .help-layout { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
+  .help-index { position: sticky; top: 88px; }
+}
+
 
 

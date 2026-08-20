@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
 import {
-  ObjectiveConflictError,
   ObjectiveStateError,
   type CreatedObjective,
   type ObjectiveService,
@@ -307,9 +306,6 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
         autoStart: { started: false },
       });
     } catch (err) {
-      if (err instanceof ObjectiveConflictError) {
-        return reply.code(409).send({ message: err.message });
-      }
       if (err instanceof ObjectiveStateError) {
         return reply.code(404).send({ message: err.message });
       }

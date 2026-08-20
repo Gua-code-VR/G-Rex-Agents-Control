@@ -9,6 +9,8 @@ import {
   type RuntimeApproval,
 } from '../api/client';
 import { computeRequiresYou } from '../lib/requires-you';
+import { HelpLink } from './HelpLink';
+import type { HelpTopicId } from '../content/help';
 
 function shortId(id: string): string {
   return id.length > 8 ? `${id.slice(0, 8)}…` : id;
@@ -57,6 +59,7 @@ export interface RequiresYouViewProps {
   onRetry: (objectiveId: string, selection?: { runtimeId: string; providerId?: string; modelId?: string | null }) => void;
   deciding?: string | null;
   busy: Record<string, boolean>;
+  onOpenHelp: (topic: HelpTopicId) => void;
 }
 
 
@@ -73,6 +76,7 @@ export function RequiresYouView({
   onRetry,
   deciding,
   busy,
+  onOpenHelp,
 }: RequiresYouViewProps) {
   const [approvals, setApprovals] = useState<GovernanceApproval[]>([]);
   const [runtimeApprovals, setRuntimeApprovals] = useState<RuntimeApproval[]>([]);
@@ -131,7 +135,10 @@ export function RequiresYouView({
       <section className="panel requires-you-summary">
         <div className="panel-head">
           <h2>Richiede il tuo intervento</h2>
-          <span className="needs-badge">{total}</span>
+          <div className="panel-actions">
+            <HelpLink topic="richiede-te" onOpenHelp={onOpenHelp}>Che cosa significa?</HelpLink>
+            <span className="needs-badge">{total}</span>
+          </div>
         </div>
         {total === 0 && (
           <p className="muted">✓ Nessun intervento richiesto — gli agenti possono procedere in autonomia.</p>
@@ -161,7 +168,7 @@ export function RequiresYouView({
 
       {pendingApprovals.length > 0 && (
         <section className="panel needs-you-panel">
-          <div className="panel-head"><h2>Approvazioni budget</h2><span className="needs-badge">{pendingApprovals.length}</span></div>
+          <div className="panel-head"><h2>Approvazioni budget</h2><div className="panel-actions"><HelpLink topic="costi-budget" onOpenHelp={onOpenHelp}>Budget</HelpLink><span className="needs-badge">{pendingApprovals.length}</span></div></div>
           {pendingApprovals.map((approval) => {
             const objective = objectiveById.get(approval.objectiveId);
             return (
@@ -183,7 +190,7 @@ export function RequiresYouView({
 
       {pendingErrorCheckpoints.length > 0 && (
         <section className="panel needs-you-panel">
-          <div className="panel-head"><h2>Errori tecnici da risolvere</h2><span className="needs-badge">{pendingErrorCheckpoints.length}</span></div>
+          <div className="panel-head"><h2>Errori tecnici da risolvere</h2><div className="panel-actions"><HelpLink topic="errori-comuni" onOpenHelp={onOpenHelp}>Errori comuni</HelpLink><span className="needs-badge">{pendingErrorCheckpoints.length}</span></div></div>
           {pendingErrorCheckpoints.map((checkpoint) => {
             const objective = objectiveById.get(checkpoint.objectiveId);
             return (

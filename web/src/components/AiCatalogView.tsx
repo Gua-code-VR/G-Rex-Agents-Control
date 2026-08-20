@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, type ProviderCatalogEntry } from '../api/client';
+import { HelpLink } from './HelpLink';
+import type { HelpTopicId } from '../content/help';
 
 /**
  * Fase 9 — AI Catalog + Routing (§13 CONTROL_ROOM_SPEC.md).
@@ -7,7 +9,7 @@ import { api, type ProviderCatalogEntry } from '../api/client';
  * capacità, pricing. Il routing resta governato da regole, non da scelte
  * manuali di modello.
  */
-export function AiCatalogView() {
+export function AiCatalogView({ onOpenHelp }: { onOpenHelp: (topic: HelpTopicId) => void }) {
   const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
 
   useEffect(() => {
@@ -17,7 +19,7 @@ export function AiCatalogView() {
   return (
     <div className="ai-catalog-view">
       <section className="panel">
-        <div className="panel-head"><h2>AI Catalog</h2></div>
+        <div className="panel-head"><h2>AI Catalog</h2><HelpLink topic="runtime-provider-modello" onOpenHelp={onOpenHelp}>Runtime, provider e modello</HelpLink></div>
         <p className="muted small">
           La selezione di runtime/provider/modello è governata automaticamente (affidabilità, budget, esiti storici).
           Qui espone la disponibilità reale, non i comandi manuali.

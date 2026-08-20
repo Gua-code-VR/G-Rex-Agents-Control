@@ -195,13 +195,16 @@ describe('M4 - checkpoint e attenzione umana', () => {
     expect(checkpoint.summary).toBe("Bloccato: L'agente non riesce a proseguire autonomamente");
     expect(checkpoint.recommendedAction).toContain('Sblocca');
 
-    // BLOCCATO è uno stato attivo (§14): l'invariante resta impegnato.
-    const conflict = await built.app.inject({
+    // Un blocco richiede attenzione, ma non impedisce di creare lavoro
+    // indipendente nello stesso progetto: la coda e gli slot decidono l'avvio.
+    const next = await built.app.inject({
       method: 'POST',
       url: `/api/projects/${projectId}/objectives`,
-      payload: { title: 'Non dovrebbe partire', objectiveText: "L'invariante è ancora attivo." },
+      payload: { title: 'Obiettivo indipendente', objectiveText: 'Può procedere senza sbloccare il precedente.' },
     });
-    expect(conflict.statusCode).toBe(409);
+    expect(next.statusCode).toBe(201);
+    expect(next.json().objective.id).not.toBe(objectiveId);
+    expect(built.services.objectives.getById(objectiveId)?.status).toBe('BLOCCATO');
   });
 
   it('errore: sessione ERRORE, obiettivo/progetto ERRORE e checkpoint ERROR', async () => {
