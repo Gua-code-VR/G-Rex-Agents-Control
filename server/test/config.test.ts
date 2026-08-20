@@ -24,4 +24,15 @@ describe('config — bind address esplicito (Tailscale/VPN)', () => {
     expect(loadConfig({ GAC_BIND_ADDRESS: '10.0.0.1', GAC_BIND_ALL: 'true', GAC_HOST: '192.168.1.5' }).bindAddress).toBe('10.0.0.1');
     expect(loadConfig({ GAC_BIND_ALL: 'true', GAC_HOST: '192.168.1.5' }).bindAddress).toBe('0.0.0.0');
   });
+
+  it('configura il limite del workflow multi-worker nativo entro limiti sicuri', () => {
+    expect(loadConfig({}).nativeWorkflowMaxWorkers).toBe(4);
+    expect(loadConfig({}).nativeWorkflowRuntimeIds).toEqual(['cline']);
+    expect(loadConfig({ GAC_NATIVE_WORKFLOW_MAX_WORKERS: '99', GAC_NATIVE_WORKFLOW_RUNTIMES: 'codex, cline ' })).toMatchObject({
+      nativeWorkflowEnabled: true,
+      nativeWorkflowMaxWorkers: 4,
+      nativeWorkflowRuntimeIds: ['codex', 'cline'],
+    });
+    expect(loadConfig({ GAC_NATIVE_WORKFLOW_ENABLED: 'false' }).nativeWorkflowEnabled).toBe(false);
+  });
 });

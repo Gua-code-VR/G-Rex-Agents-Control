@@ -23,6 +23,12 @@ export interface TeamRunTimelineItem {
   messagePreview: string | null;
 }
 
+export interface NativeWorkflowSummary {
+  maxWorkers: number;
+  phase: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  verification: string | null;
+}
+
 interface ExtractedRun {
   id: string;
   worker: string | null;
@@ -79,7 +85,30 @@ function formatDuration(ms: number | null) {
 
 function kind(event: EventRecord) {
   const text = `${event.type} ${JSON.stringify(event.payload ?? '')}`.toLowerCase();
-  return text.includes('heartbeat') ? 'heartbeat' : text.includes('fallback') ? 'fallback' : text.includes('retry') ? 'retry' : text.includes('tool') ? 'tool' : 'event';
+  return text.includes('workflow.native') ? 'workflow' : text.includes('heartbeat') ? 'heartbeat' : text.includes('fallback') ? 'fallback' : text.includes('retry') ? 'retry' : text.includes('tool') ? 'tool' : 'event';
+}
+
+/** Stato sintetico, derivato esclusivamente dagli eventi persistiti del Control Plane. */
+export function extractNativeWorkflowSummary(events: EventRecord[]): NativeWorkflowSummary | null {
+  let summary: NativeWorkflowSummary | null = null;
+  let lastMaxWorkers: number | null = null;
+  for (const event of [...events].sort((a, b) => a.id - b.id)) {
+    if (!isRecord(event.payload) || !event.type.startsWith('workflow.native.')) continue;
+    const maxWorkers: number | null = typeof event.payload.maxWorkers === 'number' ? event.payload.maxWorkers : lastMaxWorkers;
+    if (!maxWorkers) continue;
+    lastMaxWorkers = maxWorkers;
+    if (event.type === 'workflow.native.started') {
+      summary = { maxWorkers, phase: 'RUNNING', verification: null };
+      continue;
+    }
+    const outcome = stringValue(event.payload.outcome);
+    summary = {
+      maxWorkers,
+      phase: outcome === 'COMPLETED' ? 'COMPLETED' : outcome === 'CANCELLED' ? 'CANCELLED' : 'FAILED',
+      verification: stringValue(event.payload.verification),
+    };
+  }
+  return summary;
 }
 
 function worker(event: EventRecord): { id: string; task: string | null } | null {
@@ -273,6 +302,7 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
   const activeSession = sessions.find((s) => s.status === 'ATTIVA' || s.status === 'IN_AVVIO') ?? sessions[sessions.length - 1] ?? null;
   const total = orderedAttempts.reduce((sum, a) => sum + (a.costActual ?? a.costEstimate ?? 0), 0);
   const teamRuns = useMemo(() => extractTeamRuns(events), [events]);
+  const nativeWorkflow = useMemo(() => extractNativeWorkflowSummary(events), [events]);
   const concurrency = useMemo(() => calculatePeakConcurrency(teamRuns), [teamRuns]);
   const bounds = useMemo(() => timelineBounds(teamRuns), [teamRuns]);
   const workers = useMemo(() => {
@@ -317,6 +347,7 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
             <div className="kpi"><span className="kpi-label">Runtime</span><strong className="kpi-value">{current?.runtimeName ?? activeSession?.agentType ?? '—'}</strong><span className="muted small">{current?.providerName ?? activeSession?.executionSelection?.providerId ?? '—'} / {current?.modelName ?? activeSession?.executionSelection?.modelId ?? 'modello runtime'}</span></div>
             <div className="kpi"><span className="kpi-label">Costo</span><strong className="kpi-value">{money(total)}</strong><span className="muted small">{orderedAttempts.length} tentativi</span></div>
             <div className="kpi"><span className="kpi-label">Durata</span><strong className="kpi-value">{duration(current?.durationMs ?? null, current?.startedAt ?? objective.startedAt)}</strong><span className="muted small">{activeSession?.lastHeartbeatAt ? `Heartbeat ${new Date(activeSession.lastHeartbeatAt).toLocaleTimeString('it-IT')}` : 'Nessun heartbeat'}</span></div>
+            {nativeWorkflow && <div className="kpi"><span className="kpi-label">Workflow nativo</span><strong className="kpi-value">{nativeWorkflow.phase}</strong><span className="muted small">{nativeWorkflow.maxWorkers} worker max · {nativeWorkflow.verification ?? 'join/verifica in corso'}</span></div>}
           </section>
 
           <section className="panel worker-timeline-panel">
@@ -326,7 +357,7 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
                 <p className="muted small">Ricostruita dai payload persistiti `team_run_task`, `team_await_runs` e `team_list_runs`.</p>
               </div>
               <span className={concurrency.peak > 1 ? 'parallel-badge' : 'muted small'}>
-                Attivi ora {concurrency.currentlyActive} · Picco {concurrency.peak}
+                Attivi ora {concurrency.currentlyActive} · Picco {concurrency.peak}{nativeWorkflow ? ` · Limite ${nativeWorkflow.maxWorkers}` : ''}
               </span>
             </div>
             {teamRuns.length === 0 || !bounds ? (
@@ -444,7 +475,7 @@ export function ActivityMonitorView({ projects, objectivesByProject, sessionsByO
                 </ul>
               </section>
               {workers.length > 0 && (
-                <section className="panel praison-monitor">
+                <section className="panel monitor-workers">
                   <div className="panel-head"><h2>Worker e task</h2><span className={workers.length > 1 ? 'parallel-badge' : 'muted small'}>{workers.length > 1 ? 'In parallelo' : 'Tracciato'}</span></div>
                   <p className="muted small">Rilevati dagli eventi del runtime.</p>
                   <ul>{workers.map((w) => <li key={w.id}><strong>{w.id}</strong><span>{w.task ? `Task ${w.task}` : 'Task non indicato'} · {w.events.length} eventi</span></li>)}</ul>

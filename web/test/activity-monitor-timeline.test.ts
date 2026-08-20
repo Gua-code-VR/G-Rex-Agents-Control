@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EventRecord } from '../src/api/client';
-import { calculatePeakConcurrency, extractTeamRuns } from '../src/components/ActivityMonitorView';
+import { calculatePeakConcurrency, extractNativeWorkflowSummary, extractTeamRuns } from '../src/components/ActivityMonitorView';
 
 function event(id: number, toolName: string, toolCallId: string, type: 'content_start' | 'content_end', data: Record<string, unknown> | Record<string, unknown>[]): EventRecord {
   return {
@@ -47,5 +47,14 @@ describe('ActivityMonitor worker timeline', () => {
     expect(runs[0]).toMatchObject({ id: 'run_00001', worker: 'worker-a', task: 'task_0001', status: 'completed', durationMs: 9_000, overlaps: ['run_00002'] });
     expect(runs[1]).toMatchObject({ id: 'run_00002', worker: 'worker-b', task: 'task_0002', status: 'completed', durationMs: 5_000, overlaps: ['run_00001'] });
     expect(calculatePeakConcurrency(runs)).toMatchObject({ peak: 2 });
+  });
+
+  it('espone configurazione e verifica del workflow nativo dagli eventi persistiti', () => {
+    const events: EventRecord[] = [
+      { id: 1, projectId: 'p1', objectiveId: 'o1', sessionId: 's1', category: 'AGENT', type: 'workflow.native.started', timestamp: '2026-08-19T19:11:00.000Z', payload: { maxWorkers: 4 } },
+      { id: 2, projectId: 'p1', objectiveId: 'o1', sessionId: 's1', category: 'AGENT', type: 'workflow.native.finalized', timestamp: '2026-08-19T19:12:00.000Z', payload: { maxWorkers: 4, outcome: 'COMPLETED', verification: 'runtime-reported' } },
+    ];
+
+    expect(extractNativeWorkflowSummary(events)).toEqual({ maxWorkers: 4, phase: 'COMPLETED', verification: 'runtime-reported' });
   });
 });

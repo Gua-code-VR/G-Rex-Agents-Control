@@ -22,6 +22,7 @@ import type { RuntimeSelectionService } from './runtime-selection-service.js';
 import type { PersistentRetryWorker } from './persistent-retry-worker.js';
 import { WorktreeError, type WorktreeService } from './worktree-service.js';
 import type { RetryJob } from '../domain/retry-job.js';
+import { nativeWorkflowDirective, withNativeWorkflowDirective, type NativeWorkflowPolicy } from './native-workflow.js';
 
 export const EVENT_SESSION_STARTED = 'session.started';
 export const EVENT_SESSION_STOPPED = 'session.stopped';
@@ -106,6 +107,7 @@ export class AgentSessionService {
     private readonly retryWorker?: PersistentRetryWorker,
     private readonly worktrees?: WorktreeService,
     private readonly decisions?: DecisionService,
+    private readonly nativeWorkflow: NativeWorkflowPolicy = { enabled: false, maxWorkers: 1, runtimeIds: [] },
   ) {}
 
   private readonly runtimeApprovals = new Map<string, RuntimeApproval>();
@@ -218,6 +220,7 @@ export class AgentSessionService {
     }
     let executionAttempt: import('../domain/execution-attempt.js').ExecutionAttempt | null = null;
     const pendingEvents: ExecutionEvent[] = [];
+    const workflow = nativeWorkflowDirective(this.nativeWorkflow, selection.runtimeId);
     // §19: risolve il percorso isolato (worktree + branch dedicato) passato
     // all'Execution Plane; se l'isolamento non è applicabile degrada al
     // percorso principale senza cambiare il contratto runtime.
@@ -236,7 +239,7 @@ export class AgentSessionService {
     const handle = await provider.start({
       objectiveId: objective.id,
       projectPath: executionPath,
-      objectiveText: objective.objectiveText,
+      objectiveText: withNativeWorkflowDirective(objective, workflow),
       stopCondition: objective.stopCondition,
       providerId: selection.providerId,
       model: selection.modelId,
@@ -280,10 +283,17 @@ export class AgentSessionService {
       processReference: handle.processReference,
       metadata: {
         source: 'agent-session.start', selection, selectionReason: selection.decision?.reason ?? 'Selezione validata dal catalogo M14',
+        ...(workflow ? { nativeWorkflow: workflow } : {}),
         ...(workspace ? { workspaceId: workspace.id, workspacePath: workspace.worktreePath, workspaceBranch: workspace.branch } : {}),
       },
     });
     executionAttempt = attempt;
+    if (workflow) {
+      this.events.log('workflow.native.started', {
+        category: 'AGENT', objectiveId, sessionId,
+        payload: { attemptId: attempt.id, ...workflow },
+      });
+    }
     for (const event of pendingEvents) {
       if (event.type === 'approval') continue;
       this.supervisor.recordProgress(executionAttempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });
@@ -675,6 +685,13 @@ export class AgentSessionService {
     const session = this.sessions.getById(sessionId);
     if (!session || session.status !== 'ATTIVA') return; // a human transition already won the race
     this.clearRuntimeApprovals(sessionId);
+    const workflow = nativeWorkflowDirective(this.nativeWorkflow, session.executionSelection?.runtimeId ?? session.agentType);
+    if (workflow) {
+      this.events.log('workflow.native.finalized', {
+        category: 'AGENT', objectiveId, sessionId,
+        payload: { ...workflow, outcome: result.outcome, verification: result.outcome === 'COMPLETED' ? 'runtime-reported' : 'not-passed' },
+      });
+    }
     if (result.outcome === 'COMPLETED') {
       const pending = this.effectiveCost(session, result.usage) ?? 0;
       const governance = this.governance?.evaluateAdditionalCost(objectiveId, pending);
@@ -728,6 +745,7 @@ export class AgentSessionService {
     const provider = this.providers.require(selection.runtimeId);
     let attempt: import('../domain/execution-attempt.js').ExecutionAttempt | null = null;
     const pendingEvents: ExecutionEvent[] = [];
+    const workflow = nativeWorkflowDirective(this.nativeWorkflow, selection.runtimeId);
     // §19: retry/fallback riusano la stessa workspace dell'Objective (§19.2):
     // il lavoro già prodotto non viene perso né ricreato.
     let executionPath = project?.repositoryPath ?? null;
@@ -742,7 +760,7 @@ export class AgentSessionService {
         throw error;
       }
     }
-    const handle = await provider.start({ objectiveId, projectPath: executionPath, objectiveText: objective.objectiveText, stopCondition: objective.stopCondition, providerId: selection.providerId, model: selection.modelId,
+    const handle = await provider.start({ objectiveId, projectPath: executionPath, objectiveText: withNativeWorkflowDirective(objective, workflow), stopCondition: objective.stopCondition, providerId: selection.providerId, model: selection.modelId,
       heartbeatIntervalMs: Math.max(100, Math.floor(session.heartbeatIntervalMs / 2)),
       onEvent: (event) => {
         if (event.type === 'approval') {
@@ -771,8 +789,14 @@ export class AgentSessionService {
     attempt = await this.supervisor.startAttempt(this.sessions.getById(sessionId)!, {
       runtimeType: handle.descriptor.runtimeType, runtimeName: handle.descriptor.runtimeName, providerName: this.catalog?.providerName(selection.runtimeId, selection.providerId) ?? handle.descriptor.providerName,
       modelName: selection.modelId, processReference: handle.processReference, fallbackOfAttemptId,
-      metadata: { source: 'process-supervisor.retry', selection, selectionReason: fallbackOfAttemptId ? 'Ri-selezione automatica per fallback (M18)' : (selection.decision?.mode === 'AUTOMATIC' ? 'Ri-selezione automatica per retry (M18)' : 'Retry della selezione validata'), backoffApplied: true, ...(workspace ? { workspaceId: workspace.id, workspacePath: workspace.worktreePath, workspaceBranch: workspace.branch } : {}) },
+      metadata: { source: 'process-supervisor.retry', selection, selectionReason: fallbackOfAttemptId ? 'Ri-selezione automatica per fallback (M18)' : (selection.decision?.mode === 'AUTOMATIC' ? 'Ri-selezione automatica per retry (M18)' : 'Retry della selezione validata'), backoffApplied: true, ...(workflow ? { nativeWorkflow: workflow } : {}), ...(workspace ? { workspaceId: workspace.id, workspacePath: workspace.worktreePath, workspaceBranch: workspace.branch } : {}) },
     });
+    if (workflow) {
+      this.events.log('workflow.native.started', {
+        category: 'AGENT', objectiveId, sessionId,
+        payload: { attemptId: attempt.id, retryOfAttemptId: fallbackOfAttemptId, ...workflow },
+      });
+    }
     for (const event of pendingEvents) {
       if (event.type === 'approval') continue;
       this.supervisor.recordProgress(attempt, event.type, { message: event.message ?? null, metadata: event.metadata ?? null });

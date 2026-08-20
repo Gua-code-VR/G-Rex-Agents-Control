@@ -540,10 +540,10 @@ export class ClineProvider extends LocalCliProvider {
   }
   catalog(): ProviderCatalogEntry[] {
     return this.pricing().map((entry) => ({
-      runtime: { id: 'cline', name: 'Cline', type: 'cli', available: this.isConfigured(), defaultModel: entry.models[0]?.id ?? null, capabilities: ['code', 'tool-use', 'workspace-edit', 'streaming'], version: null },
+      runtime: { id: 'cline', name: 'Cline', type: 'cli', available: this.isConfigured(), defaultModel: entry.models[0]?.id ?? null, capabilities: ['code', 'tool-use', 'workspace-edit', 'streaming', 'team-orchestration'], version: null },
       provider: { id: entry.id, name: entry.name },
       models: entry.models.map((model) => ({
-        id: model.id, name: model.name, version: null, capabilities: ['code', 'tool-use', 'workspace-edit', 'streaming'],
+        id: model.id, name: model.name, version: null, capabilities: ['code', 'tool-use', 'workspace-edit', 'streaming', 'team-orchestration'],
         limits: { contextTokens: model.contextTokens, defaultOutputTokens: model.defaultOutputTokens },
         pricing: {
           ...model.pricing,
@@ -576,7 +576,7 @@ export class CodexProvider extends LocalCliProvider {
     if (model) args.push('--model', model);
     return this.launch([...args, prompt], params);
   }
-  catalog(): ProviderCatalogEntry[] { const id = this.defaultModel ?? 'codex-default'; return [{ runtime: { id: 'codex', name: 'Codex CLI', type: 'cli', available: this.isConfigured(), defaultModel: id, capabilities: ['workspace-edit', 'streaming', 'json-output'], version: '0.147-compatible' }, provider: { id: 'openai-codex', name: 'OpenAI Codex' }, models: [{ id, name: this.defaultModel ?? 'Modello Codex predefinito', version: null, capabilities: ['code', 'tool-use'], limits: { contextTokens: null, defaultOutputTokens: 4000 }, pricing: { ...this.pricing, currency: 'USD' } }] }]; }
+  catalog(): ProviderCatalogEntry[] { const id = this.defaultModel ?? 'codex-default'; return [{ runtime: { id: 'codex', name: 'Codex CLI', type: 'cli', available: this.isConfigured(), defaultModel: id, capabilities: ['workspace-edit', 'streaming', 'json-output', 'team-orchestration'], version: '0.147-compatible' }, provider: { id: 'openai-codex', name: 'OpenAI Codex' }, models: [{ id, name: this.defaultModel ?? 'Modello Codex predefinito', version: null, capabilities: ['code', 'tool-use', 'team-orchestration'], limits: { contextTokens: null, defaultOutputTokens: 4000 }, pricing: { ...this.pricing, currency: 'USD' } }] }]; }
 }
 
 export class FakeProvider implements ExecutionProvider {

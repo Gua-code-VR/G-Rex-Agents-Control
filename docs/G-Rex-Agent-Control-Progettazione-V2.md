@@ -677,6 +677,14 @@ Retry e fallback della stessa esecuzione devono riutilizzare lo stesso worktree.
 
 Il `ProcessSupervisor` continua a essere responsabile di attempt, processi, retry, fallback, costi ed eventi. La gestione del lifecycle della workspace Git appartiene a un servizio separato (ad esempio `WorktreeManager`) e **non richiede la riscrittura dell'Execution Plane**.
 
+Quando un runtime espone un motore multi-worker nativo, Agent Control può
+fornire una policy di orchestrazione con numero massimo di worker, task,
+dipendenze, fan-out/join, isolamento degli errori e verifica finale. Il runtime
+esegue tale piano nella workspace già assegnata, mentre Agent Control conserva
+la fonte unica per stato, routing, budget, retry/fallback, worktree e Audit. I
+task che modificano gli stessi file non sono concorrenti; il Monitor attività
+ricostruisce i run dai relativi eventi persistiti.
+
 ### 19.3 Repository principale con modifiche locali
 
 Prima di creare o integrare una workspace Agent Control deve verificare lo stato Git rilevante. Modifiche locali non committate nella working tree principale non devono essere ignorate, sovrascritte, incluse implicitamente o nascoste.
@@ -913,3 +921,16 @@ Quando codice e documentazione divergono, non si deve scegliere
 arbitrariamente il comportamento esistente: la divergenza deve essere
 identificata e l'implementazione riallineata alla specifica corrente,
 salvo esplicita nuova decisione di prodotto.
+
+### 25.1 Decisione sul POC PraisonAI
+
+PraisonAI Ã¨ stato valutato esclusivamente come POC di workflow parallelo e
+**non Ã¨ adottato** in Agent Control. Il prodotto non include adapter,
+configurazioni, dipendenze o workflow PraisonAI; non deve diventare un secondo
+orchestratore dell'Execution Plane.
+
+Restano invece capacitÃ  native di Agent Control le esecuzioni concorrenti
+isolate in workspace Git, la telemetria dei worker e dei run del runtime, la
+timeline del Monitor attivitÃ , il routing e il recovery con retry/fallback.
+Tali capacitÃ  continuano a essere governate dal Control Plane e dal
+`ProcessSupervisor` secondo le sezioni precedenti.

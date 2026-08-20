@@ -232,6 +232,11 @@ export async function buildApp(config: AppConfig = loadConfig()): Promise<BuiltA
     retryWorker,
     workspaces,
     decisions,
+    {
+      enabled: config.nativeWorkflowEnabled,
+      maxWorkers: config.nativeWorkflowMaxWorkers,
+      runtimeIds: config.nativeWorkflowRuntimeIds,
+    },
   );
   retryWorker.setExecutor((job) => agentSessions.runRetryJob(job));
 
